@@ -17,6 +17,11 @@ const LOT = { x0: 255, x1: 385, z0: -65, z1: 65 }; // training ground
 const GEARS = ['P', 'R', 'N', 'D'];
 const PASS_SCORE = 70, FAIL_SCORE = 40;
 const DIRS = [[1, 0], [-1, 0], [0, 1], [0, -1]];
+// Road segments are keyed by axis and their lower-index node: 'x:i,j' runs from node (i,j) to (i+1,j).
+const ZONE30 = new Set(['x:0,1', 'x:-1,1', 'x:-1,-1']);   // 30 km/h zones, each with a zebra crossing
+const STOP_NODES = new Set(['1,1', '-1,-1']);             // all-way STOP junctions (no lights)
+const CW_AT = 0.35;      // zebra position along its segment (fraction of S from the lower node)
+const PED_U = W / 2 + 1.5; // kerb-to-kerb half distance a pedestrian walks
 
 // ---------------------------------------------------------------- renderer
 const renderer = new T.WebGLRenderer({ canvas: $('view'), antialias: true, logarithmicDepthBuffer: true });
@@ -33,14 +38,15 @@ window.addEventListener('resize', resize);
 resize();
 
 // ---------------------------------------------------------------- state
-let side = 1;            // 1 = traffic keeps right, -1 = keeps left
+let side = -1;           // -1 = traffic keeps left (default, as in India), 1 = keeps right
 let scene, sun, nodes, colliders, drivable, ring, lessonGroup, playerMesh;
-let traffic = [], cones = [], statics = [];
+let traffic = [], cones = [], statics = [], peds = [], crosswalks = [];
 let state = 'menu';      // menu | run | pause | end
 let lesson = null, steps = [], stepIdx = 0, startPose = null;
 let score = 100, violations = {}, lastPen = {}, clock = 0;
 let camMode = 0;         // 0 chase, 1 cockpit, 2 top
 let wrongT = 0, curNode = null, entryTh = 0, entrySig = 0, activeBox = null;
+let curLimit = 50, limitSince = 0, stopNode = null, stopTime = -99;
 const car = { x: 0, z: 0, th: 0, v: 0, steer: 0, gear: 'P', engine: false, belt: false, signal: 0 };
 const keys = { gas: false, brake: false, left: false, right: false, hand: false };
 
@@ -63,6 +69,9 @@ const GEO = {
   coneBase: new T.BoxGeometry(0.5, 0.05, 0.5), pole: new T.CylinderGeometry(0.09, 0.09, 5.4, 8),
   housing: new T.BoxGeometry(0.46, 1.45, 0.34), bulb: new T.SphereGeometry(0.17, 12, 8),
   trunk: new T.CylinderGeometry(0.22, 0.3, 2.4, 7), leaves: new T.ConeGeometry(2, 5, 8),
+  signPole: new T.CylinderGeometry(0.05, 0.05, 2.6, 6), signRound: new T.CircleGeometry(0.55, 24),
+  signOct: new T.CircleGeometry(0.6, 8, Math.PI / 8), signSquare: new T.PlaneGeometry(1, 1),
+  pedBody: new T.BoxGeometry(0.42, 0.62, 0.26), pedHead: new T.SphereGeometry(0.15, 10, 8), pedLeg: new T.BoxGeometry(0.15, 0.72, 0.17),
 };
 const MAT = {
   glass: lam(0x1d2a36), tyre: lam(0x16171a), head: basic(0xfff6cf), dark: lam(0x24272c),
@@ -99,6 +108,51 @@ function windowTexture() {
   return t;
 }
 const ROAD_TEX = roadTexture(), WIN_TEX = windowTexture();
+
+// ---------------------------------------------------------------- road signs
+const signMats = {};
+function signMat(kind) {
+  if (signMats[kind]) return signMats[kind];
+  const c = document.createElement('canvas'); c.width = c.height = 128;
+  const g = c.getContext('2d');
+  g.textAlign = 'center'; g.textBaseline = 'middle';
+  if (kind === 'stop') {
+    g.fillStyle = '#c8102e'; g.fillRect(0, 0, 128, 128);
+    g.fillStyle = '#fff'; g.font = 'bold 38px Arial, sans-serif'; g.fillText('STOP', 64, 67);
+  } else if (kind === 'walk') {
+    g.fillStyle = '#fff'; g.fillRect(0, 0, 128, 128);   // cautionary sign: red-bordered triangle
+    g.strokeStyle = '#d8262c'; g.lineWidth = 12; g.lineJoin = 'round';
+    g.beginPath(); g.moveTo(64, 12); g.lineTo(118, 112); g.lineTo(10, 112); g.closePath(); g.stroke();
+    g.fillStyle = g.strokeStyle = '#111'; g.lineWidth = 7; g.lineCap = 'round';
+    g.lineWidth = 6; g.beginPath(); g.arc(64, 50, 6, 0, 7); g.fill();
+    g.beginPath(); g.moveTo(64, 58); g.lineTo(64, 82); g.moveTo(64, 82); g.lineTo(52, 102); g.moveTo(64, 82); g.lineTo(76, 102);
+    g.moveTo(50, 70); g.lineTo(78, 66); g.stroke();
+  } else {   // speed limit: the kind is the number
+    g.fillStyle = '#fff'; g.fillRect(0, 0, 128, 128);
+    g.strokeStyle = '#d8262c'; g.lineWidth = 16; g.beginPath(); g.arc(64, 64, 54, 0, 7); g.stroke();
+    g.fillStyle = '#111'; g.font = 'bold 54px Arial, sans-serif'; g.fillText(kind, 64, 68);
+  }
+  const t = new T.CanvasTexture(c); t.colorSpace = T.SRGBColorSpace; t.anisotropy = 4;
+  return (signMats[kind] = new T.MeshBasicMaterial({ map: t }));
+}
+// (nx, nz) is the direction the sign face points, i.e. towards the driver it addresses
+function addSign(kind, x, z, nx, nz) {
+  const geo = kind === 'stop' ? GEO.signOct : kind === 'walk' ? GEO.signSquare : GEO.signRound;
+  const g = new T.Group(); g.position.set(x, 0, z); g.rotation.y = Math.atan2(nx, nz);
+  const pole = new T.Mesh(GEO.signPole, MAT.pole); pole.position.y = 1.3;
+  const face = new T.Mesh(geo, signMat(String(kind))); face.position.set(0, 2.7, 0.06);
+  const back = new T.Mesh(geo, MAT.pole); back.position.set(0, 2.7, 0.04); back.rotation.y = Math.PI;
+  g.add(pole, face, back); scene.add(g);
+}
+const segKey = (a, b) => a.j === b.j ? `x:${Math.min(a.i, b.i)},${a.j}` : `z:${a.i},${Math.min(a.j, b.j)}`;
+function limitAt(x, z) {   // null inside junctions and off the road: the previous limit keeps applying
+  if (x > LOT.x0 - 5) return 20;
+  const i = Math.round(x / S), j = Math.round(z / S);
+  const onX = Math.abs(z - j * S) < W / 2 && Math.abs(x) <= HALF, onZ = Math.abs(x - i * S) < W / 2 && Math.abs(z) <= HALF;
+  if (onX && !onZ) return ZONE30.has(`x:${Math.floor(x / S)},${j}`) ? 30 : 50;
+  if (onZ && !onX) return ZONE30.has(`z:${i},${Math.floor(z / S)}`) ? 30 : 50;
+  return null;
+}
 
 // ---------------------------------------------------------------- car model
 function makeCar(color, isPlayer) {
@@ -176,17 +230,24 @@ function buildWorld() {
   for (let i = -G; i <= G; i++) for (let j = -G; j <= G; j++)
     nodes.set(nodeKey(i, j), { i, j, x: i * S, z: j * S, nb: [], off: (((i * 7 + j * 11) % 26) + 26) % 26, mats: null });
   const asphalt = lam(0x3b3e44);
+  for (const n of nodes.values()) for (const d of DIRS) if (nodes.has(nodeKey(n.i + d[0], n.j + d[1]))) n.nb.push(d);
   for (const n of nodes.values()) {
-    for (const d of DIRS) if (nodes.has(nodeKey(n.i + d[0], n.j + d[1]))) n.nb.push(d);
-    n.lights = n.nb.length >= 3;
+    n.stop = STOP_NODES.has(nodeKey(n.i, n.j)); n.claim = null;
+    n.lights = n.nb.length >= 3 && !n.stop;
     flat(scene, W, W, asphalt, n.x, 0.06, n.z);
-    if (!n.lights) continue;
+    for (const d of n.nb) {            // speed-limit sign wherever the limit changes on the way out of a junction
+      const out = nodeAt(n, d), lim = ZONE30.has(segKey(n, out)) ? 30 : 50, l = laneVec(d);
+      const differs = n.nb.some(o => !(o[0] === d[0] && o[1] === d[1]) && (ZONE30.has(segKey(n, nodeAt(n, o))) ? 30 : 50) !== lim);
+      if (differs) addSign(lim, n.x + d[0] * (W / 2 + 7) + l[0] * (W / 2 + 1.2), n.z + d[1] * (W / 2 + 7) + l[1] * (W / 2 + 1.2), -d[0], -d[1]);
+    }
+    if (!n.lights && !n.stop) continue;
     const mk = () => [basic(0x330000), basic(0x332200), basic(0x003300)];
-    n.mats = { x: mk(), z: mk() };
+    if (n.lights) n.mats = { x: mk(), z: mk() };
     for (const d of n.nb) {            // d points from the node to the neighbour the traffic arrives from
       const t = [-d[0], -d[1]], l = laneVec(t), axis = t[0] !== 0 ? 'x' : 'z';
       flat(scene, W / 2 - 0.5, 0.5, MAT.white, n.x + d[0] * (W / 2 + 0.7) + l[0] * W / 4, 0.08,
         n.z + d[1] * (W / 2 + 0.7) + l[1] * W / 4, axis === 'x' ? Math.PI / 2 : 0);
+      if (n.stop) { addSign('stop', n.x + d[0] * (W / 2 + 1.2) + l[0] * (W / 2 + 1.2), n.z + d[1] * (W / 2 + 1.2) + l[1] * (W / 2 + 1.2), d[0], d[1]); continue; }
       // signal head on the far side of the junction, facing the approaching driver
       const px = n.x - d[0] * (W / 2 + 1.4) + l[0] * (W / 2 + 1.3), pz = n.z - d[1] * (W / 2 + 1.4) + l[1] * (W / 2 + 1.3);
       const grp = new T.Group(); grp.position.set(px, 0, pz); grp.rotation.y = Math.atan2(d[0], d[1]);
@@ -197,6 +258,21 @@ function buildWorld() {
       scene.add(grp);
     }
   }
+
+  // zebra crossings in the 30 zones
+  crosswalks = [];
+  for (const key of ZONE30) {
+    const ax = key[0], [i, j] = key.slice(2).split(',').map(Number);
+    const cw = { ax, x: (ax === 'x' ? i + CW_AT : i) * S, z: (ax === 'x' ? j : j + CW_AT) * S, key, busy: false };
+    crosswalks.push(cw);
+    for (let u = -W / 2 + 0.75; u < W / 2; u += 1.05)
+      flat(scene, ax === 'x' ? 3 : 0.55, ax === 'x' ? 0.55 : 3, MAT.white, cw.x + (ax === 'x' ? 0 : u), 0.08, cw.z + (ax === 'x' ? u : 0));
+    for (const sgn of [1, -1]) {
+      const t = ax === 'x' ? [sgn, 0] : [0, sgn], l = laneVec(t);
+      addSign('walk', cw.x - t[0] * 3 + l[0] * (W / 2 + 1.2), cw.z - t[1] * 3 + l[1] * (W / 2 + 1.2), -t[0], -t[1]);
+    }
+  }
+  addSign(20, 282, -44, 0, -1);
 
   // city blocks
   colliders = [];
@@ -239,6 +315,7 @@ function buildWorld() {
   lessonGroup = new T.Group(); scene.add(lessonGroup);
   playerMesh = makeCar(0xd32f2f, true); scene.add(playerMesh);
   spawnTraffic(16);
+  spawnPeds();
 }
 
 function lightState(n, axis) {
@@ -266,6 +343,10 @@ function pickNext(a, b) {
   return nodeAt(b, opts[Math.floor(Math.random() * opts.length)]);
 }
 function setSegment(c, a, b) {
+  if (c.b && c.b.claim === c) c.b.claim = null;   // leaving the STOP junction we had priority at
+  c.slow = ZONE30.has(segKey(a, b)); c.stopT = 0;
+  c.cw = c.slow ? crosswalks.find(k => k.key === segKey(a, b)) : null;
+  if (c.cw) c.sCw = ((b.i - a.i) + (b.j - a.j) > 0 ? CW_AT : 1 - CW_AT) * S - W / 2;
   c.a = a; c.b = b; c.d = [b.i - a.i, b.j - a.j]; c.l = laneVec(c.d);
   c.next = pickNext(a, b);
   const d2 = [c.next.i - b.i, c.next.j - b.j];
@@ -288,6 +369,7 @@ function aiPose(c) {
 function spawnTraffic(count) {
   for (const c of traffic) scene.remove(c.mesh);
   traffic = [];
+  for (const n of nodes.values()) n.claim = null;
   const all = [...nodes.values()];
   const colors = [0x2f6fd3, 0xf0f0f0, 0x2b2f36, 0x9aa3ad, 0x2e9c5a, 0xe0a422, 0x7b4bc4, 0xc9d2da];
   let guard = 0;
@@ -309,6 +391,17 @@ function updateTraffic(dt, blinkOn) {
     if (c.hold > 0) { c.hold -= dt; vmax = 0; }
     if (c.mode === 'seg') {
       if (c.turn && c.s > segLen - 18) vmax = Math.min(vmax, 5);
+      if (c.slow) vmax = Math.min(vmax, 7.6);
+      if (c.cw && c.cw.busy && c.s < c.sCw - 3) vmax = Math.min(vmax, Math.sqrt(2 * 3 * Math.max(0, c.sCw - 5.5 - c.s)));
+      if (c.b.stop && c.b.claim !== c) {   // all-way stop: halt, wait a second, go when the junction is free
+        const dist = stopS - c.s;
+        vmax = Math.min(vmax, Math.sqrt(2 * 3 * Math.max(0, dist)));
+        if (dist < 0.6 && c.v < 0.5) {
+          c.stopT += dt;
+          const playerIn = Math.abs(car.x - c.b.x) < W / 2 && Math.abs(car.z - c.b.z) < W / 2;
+          if (c.stopT > 1 && !c.b.claim && !playerIn) c.b.claim = c;
+        }
+      }
       if (c.b.lights && c.s <= stopS + 1) {
         const st = lightState(c.b, c.d[0] !== 0 ? 'x' : 'z');
         const dist = stopS - c.s;
@@ -355,6 +448,81 @@ function updateTraffic(dt, blinkOn) {
     const sig = c.turn && (c.mode === 'turn' || c.s > segLen - 30) ? c.turn : 0;
     setCarLamps(c.mesh, braking || c.v < 0.1, sig, blinkOn);
   }
+}
+
+// ---------------------------------------------------------------- pedestrians
+function makePed(rand) {
+  const shirts = [0xd9483b, 0x3b7dd9, 0xe8c547, 0x4caf6a, 0xf2f2f2, 0x8e5bd0, 0x2f3640, 0xe07b39];
+  const g = new T.Group();
+  const body = new T.Mesh(GEO.pedBody, lam(shirts[Math.floor(rand() * shirts.length)])); body.position.y = 1.05; body.castShadow = true;
+  const head = new T.Mesh(GEO.pedHead, lam(0xe2b38f)); head.position.y = 1.53;
+  const legMat = lam(0x2b3350), legs = [];
+  for (const sx of [1, -1]) {
+    const hip = new T.Group(); hip.position.set(sx * 0.11, 0.74, 0);
+    const leg = new T.Mesh(GEO.pedLeg, legMat); leg.position.y = -0.36;
+    hip.add(leg); g.add(hip); legs.push(hip);
+  }
+  g.add(body, head); g.userData.legs = legs; scene.add(g);
+  return g;
+}
+function spawnPeds() {
+  const rand = Math.random;
+  peds = [];
+  for (const cw of crosswalks) for (const sgn of [1, -1])   // two people per zebra, starting on opposite kerbs
+    peds.push({ kind: 'cross', cw, u: sgn * PED_U, dir: -sgn, off: sgn * 0.7, wait: 3 + rand() * 8, walking: false, speed: 1.3 + rand() * 0.3 });
+  for (let k = 0; k < 18; k++) {                             // strollers circling a block on the pavement
+    const cx = (Math.floor(rand() * 2 * G) - G + 0.5) * S, cz = (Math.floor(rand() * 2 * G) - G + 0.5) * S, r = (S - W) / 2 - 1.2 - rand() * 2.2;
+    const pts = [[cx - r, cz - r], [cx + r, cz - r], [cx + r, cz + r], [cx - r, cz + r]], at = Math.floor(rand() * 4), f = rand();
+    const turn = rand() < 0.5 ? 1 : 3, to = (at + turn) % 4;
+    peds.push({ kind: 'loop', pts, k: to, turn, x: pts[at][0] + (pts[to][0] - pts[at][0]) * f, z: pts[at][1] + (pts[to][1] - pts[at][1]) * f, speed: 1.1 + rand() * 0.5 });
+  }
+  for (const p of peds) { p.mesh = makePed(rand); p.phase = rand() * 6; p.th = 0; placeCrossPed(p); }
+}
+function placeCrossPed(p) {
+  if (p.kind !== 'cross') return;
+  const x = p.cw.ax === 'x';
+  p.x = p.cw.x + (x ? p.off : p.u); p.z = p.cw.z + (x ? p.u : p.off);
+}
+function crossingClear(cw, vehicles) {   // nobody steps out in front of a vehicle that could not stop in time
+  for (const v of vehicles) {
+    const x = cw.ax === 'x', along = x ? cw.x - v.x : cw.z - v.z, lat = x ? v.z - cw.z : v.x - cw.x;
+    if (Math.abs(lat) > W / 2 + 1) continue;
+    const va = v.v * (x ? Math.sin(v.th) : Math.cos(v.th));
+    if (Math.abs(along) < 4 || (Math.abs(va) > 0.5 && along * va > 0 && Math.abs(along) < 9 + Math.abs(va) * 2.2)) return false;
+  }
+  return true;
+}
+function updatePeds(dt) {
+  const vehicles = [...traffic, car];
+  for (const p of peds) {
+    let nx = p.x, nz = p.z, step = false;
+    if (p.kind === 'cross') {
+      if (!p.walking) { p.wait -= dt; if (p.wait <= 0 && crossingClear(p.cw, vehicles)) p.walking = true; }
+      if (p.walking) {
+        const x = p.cw.ax === 'x', nu = p.u + p.dir * p.speed * dt;
+        nx = p.cw.x + (x ? p.off : nu); nz = p.cw.z + (x ? nu : p.off); step = true;
+      }
+    } else {
+      const [tx, tz] = p.pts[p.k], d = Math.hypot(tx - p.x, tz - p.z);
+      if (d < 0.3) p.k = (p.k + p.turn) % 4;
+      else { nx = p.x + (tx - p.x) / d * p.speed * dt; nz = p.z + (tz - p.z) / d * p.speed * dt; step = true; }
+    }
+    if (step) for (const v of vehicles) {   // never walk into a vehicle; walking away from one is fine
+      const [lx, lz] = toLocal(v, nx, nz);
+      if (Math.abs(lx) < CW + 0.7 && Math.abs(lz) < CL + 0.9 && Math.hypot(nx - v.x, nz - v.z) < Math.hypot(p.x - v.x, p.z - v.z)) { step = false; break; }
+    }
+    if (step) {
+      p.th = Math.atan2(nx - p.x, nz - p.z); p.x = nx; p.z = nz; p.phase += dt * p.speed * 5.5;
+      if (p.kind === 'cross') {
+        p.u += p.dir * p.speed * dt;
+        if (p.u * p.dir >= PED_U) { p.u = p.dir * PED_U; p.dir = -p.dir; p.walking = false; p.wait = 6 + Math.random() * 12; }
+      }
+    }
+    const swing = step ? Math.sin(p.phase) * 0.6 : 0;
+    p.mesh.userData.legs[0].rotation.x = swing; p.mesh.userData.legs[1].rotation.x = -swing;
+    p.mesh.position.set(p.x, p.kind === 'loop' ? 0.14 : 0, p.z); p.mesh.rotation.y = p.th;
+  }
+  for (const cw of crosswalks) cw.busy = peds.some(p => p.cw === cw && p.walking && Math.abs(p.u) < W / 2 + 0.6);
 }
 
 // ---------------------------------------------------------------- geometry helpers
@@ -434,9 +602,9 @@ const LESSONS = [
         { type: 'stop', box, park: true, text: 'Park fully inside the free bay, stop, and select P. For reverse: stop, select R (Z), steer and back in slowly.' },
       ] };
     } },
-  { id: 'city', title: '3 · City exam', desc: 'Follow the route through traffic: obey lights, keep your lane, signal every turn, max 50 km/h.', build() {
+  { id: 'city', title: '3 · City exam', desc: 'Follow the route through traffic: obey lights and signs, give way to pedestrians, signal every turn.', build() {
       const route = [[-2, 0], [-1, 0], [0, 0], [0, 1], [1, 1], [1, 0], [1, -1], [0, -1], [-1, -1], [-1, 0], [-2, 0]];
-      const st = [{ type: 'ready', text: 'Exam start. Seatbelt (B), engine (I), Drive (X). Then pull away when it is safe.' }];
+      const st = [{ type: 'ready', text: 'Exam start. Seatbelt (B), engine (I), Drive (X). Watch for speed-limit signs, STOP signs and zebra crossings.' }];
       for (let k = 1; k < route.length - 1; k++) {
         const a = route[k], b = route[k + 1], p = route[k - 1];
         const d = [b[0] - a[0], b[1] - a[1]], d0 = [a[0] - p[0], a[1] - p[1]], l = laneVec(d);
@@ -444,11 +612,13 @@ const LESSONS = [
         const text = cross < 0 ? 'At the next junction turn LEFT. Signal first (Q) and give way to oncoming traffic.'
           : cross > 0 ? 'At the next junction turn RIGHT. Signal first (E) and slow down for the corner.'
           : 'Go straight on at the junction. Stop if the light is red.';
+        const extra = (STOP_NODES.has(a[0] + ',' + a[1]) ? ' It has a STOP sign: come to a complete stop first.' : '')
+          + (ZONE30.has(segKey({ i: p[0], j: p[1] }, { i: a[0], j: a[1] })) ? ' 30 zone ahead — give way at the zebra crossing.' : '');
         const mx = (a[0] + b[0]) / 2 * S + l[0] * LANE, mz = (a[1] + b[1]) / 2 * S + l[1] * LANE;
         if (k === route.length - 2) {
           const box = addBox({ x: mx + l[0] * 0.6, z: mz + l[1] * 0.6, th: Math.atan2(d[0], d[1]), hw: 2.2, hl: 5 });
-          st.push({ type: 'stop', box, park: true, text: text + ' Then pull over in the yellow box, stop and select P.' });
-        } else st.push({ type: 'cp', x: mx, z: mz, r: 4.5, text });
+          st.push({ type: 'stop', box, park: true, text: text + extra + ' Then pull over in the yellow box, stop and select P.' });
+        } else st.push({ type: 'cp', x: mx, z: mz, r: 4.5, text: text + extra });
       }
       return { start: cityStart(), steps: st };
     } },
@@ -466,6 +636,7 @@ function startLesson(l) {
   steps = built.steps; stepIdx = 0; startPose = built.start;
   Object.assign(car, built.start, { v: 0, steer: 0, gear: 'P', engine: false, belt: false, signal: 0 });
   score = 100; violations = {}; lastPen = {}; wrongT = 0; curNode = null; activeBox = null;
+  curLimit = limitAt(car.x, car.z) || 50; limitSince = clock; stopNode = null;
   spawnTraffic(16);
   camera.position.set(car.x - Math.sin(car.th) * 9, 5, car.z - Math.cos(car.th) * 9);
   $('toasts').innerHTML = '';
@@ -625,10 +796,14 @@ function updateCar(dt) {
   }
   if (!crash) for (const o of statics) if (obbOverlap(car, o)) { crash = 'Hit a parked car'; break; }
   if (!crash) for (const o of traffic) if (Math.hypot(o.x - car.x, o.z - car.z) < 5 && obbOverlap(car, o)) { crash = 'Collision with a vehicle'; o.hold = 2; break; }
+  if (!crash && Math.abs(car.v) > 0.5) for (const p of peds) {
+    const [lx, lz] = toLocal(car, p.x, p.z);
+    if (Math.abs(lx) < CW + 0.25 && Math.abs(lz) < CL + 0.25) { crash = 'Hit a pedestrian'; break; }
+  }
   if (crash) {
     const hard = Math.abs(car.v) > 0.6;
     car.x = px; car.z = pz; car.th = pth; car.v = 0;
-    if (hard) penalize(crash, 20, 2.5);
+    if (hard) penalize(crash, crash === 'Hit a pedestrian' ? 60 : 20, 2.5);
   }
   for (const c of cones) {
     if (c.hit) continue;
@@ -642,9 +817,11 @@ function updateCar(dt) {
 
 function checkRules(dt) {
   const fx = Math.sin(car.th), fz = Math.cos(car.th), kmh = Math.abs(car.v) * 3.6;
-  const limit = inLot() ? 20 : 50;
+  const here = limitAt(car.x, car.z);
+  if (here && here !== curLimit) { curLimit = here; limitSince = clock; }
+  const limit = curLimit;
   if (Math.abs(car.v) > 1.5 && !car.belt) penalize('Driving without a seatbelt', 10, 20);
-  if (kmh > limit + 3) penalize('Speeding', 5, 4);
+  if (kmh > limit + 3 && clock - limitSince > 2.5) penalize('Speeding', 5, 4);   // short grace to slow down after a sign
   if (!isDrivable(car.x + fx * 1.3, car.z + fz * 1.3) || !isDrivable(car.x - fx * 1.3, car.z - fz * 1.3))
     penalize(inLot() ? 'Left the training area' : 'Left the roadway', 5, 3);
   if (inLot()) { curNode = null; wrongT = 0; return limit; }
@@ -653,7 +830,9 @@ function checkRules(dt) {
   const i = Math.round(car.x / S), j = Math.round(car.z / S);
   const n = nodes.get(nodeKey(i, j));
   const inside = n && Math.abs(car.x - n.x) < W / 2 && Math.abs(car.z - n.z) < W / 2 ? n : null;
+  if (!inside && n && n.stop && Math.abs(car.v) < 0.3 && Math.max(Math.abs(car.x - n.x), Math.abs(car.z - n.z)) < W / 2 + 10) { stopNode = n; stopTime = clock; }
   if (inside && !curNode) {
+    if (inside.stop && car.v > 0.5 && !(stopNode === inside && clock - stopTime < 8)) penalize('Did not stop at a STOP sign', 15, 3);
     const px = car.x - fx * car.v * dt * 2;
     const axis = Math.abs(px - inside.x) >= W / 2 ? 'x' : 'z';
     if (inside.lights && car.v > 0.5 && lightState(inside, axis) === 'r') penalize('Ran a red light', 25, 3);
@@ -667,6 +846,14 @@ function checkRules(dt) {
     }
   }
   curNode = inside;
+
+  // zebra crossings: do not drive onto one while someone is crossing in or near your path
+  for (const cw of crosswalks) {
+    const x = cw.ax === 'x', along = x ? car.x - cw.x : car.z - cw.z, lat = x ? car.z - cw.z : car.x - cw.x;
+    if (Math.abs(along) < 3.8 && Math.abs(lat) < W / 2 && Math.abs(car.v) > 0.8 &&
+        peds.some(p => p.cw === cw && p.walking && Math.abs(p.u) < W / 2 && Math.abs(p.u - lat) < 3.5))
+      penalize('Did not give way to a pedestrian', 15, 5);
+  }
 
   // wrong side of the road (only judged on straight sections while moving forward)
   let wrong = false;
@@ -739,6 +926,8 @@ function updateHud(limit, blinkOn) {
   g.strokeStyle = '#8a909b'; g.lineWidth = W * sc; g.beginPath();
   for (let k = -G; k <= G; k++) { g.moveTo(X(-HALF), Z(k * S)); g.lineTo(X(HALF), Z(k * S)); g.moveTo(X(k * S), Z(-HALF)); g.lineTo(X(k * S), Z(HALF)); }
   g.stroke();
+  g.fillStyle = '#fff'; for (const cw of crosswalks) g.fillRect(X(cw.x) - (cw.ax === 'x' ? 2 : 5), Z(cw.z) - (cw.ax === 'x' ? 5 : 2), cw.ax === 'x' ? 4 : 10, cw.ax === 'x' ? 10 : 4);
+  g.fillStyle = '#7dffa8'; for (const p of peds) if (p.walking) g.fillRect(X(p.x) - 2, Z(p.z) - 2, 4, 4);
   g.fillStyle = '#dfe6f0'; for (const c of traffic) g.fillRect(X(c.x) - 3, Z(c.z) - 3, 6, 6);
   if (tgt) { g.fillStyle = '#ffc530'; g.beginPath(); g.arc(clamp(X(tgt.x), 8, N - 8), clamp(Z(tgt.z), 8, N - 8), 8, 0, 7); g.fill(); }
   g.save(); g.translate(cx, cy); g.rotate(-car.th + Math.PI);
@@ -756,6 +945,7 @@ function frame(now) {
     const blinkOn = (clock * 2.6) % 1 < 0.5;
     updateLights();
     updateTraffic(dt, blinkOn);
+    updatePeds(dt);
     if (state === 'run') {
       updateCar(dt);
       const limit = checkRules(dt);
@@ -811,6 +1001,6 @@ if ('ontouchstart' in window || navigator.maxTouchPoints > 0) document.body.clas
 try { const s = +localStorage.getItem('driveready.side'); if (s === 1 || s === -1) side = s; } catch (e) { /* storage unavailable */ }
 for (const o of $('sideSel').children) o.classList.toggle('on', +o.dataset.side === side);
 buildWorld();
-window.__sim = { car, keys, get state() { return state; }, get score() { return score; }, get stepIdx() { return stepIdx; }, get traffic() { return traffic; }, get violations() { return violations; } };
+window.__sim = { car, keys, get state() { return state; }, get score() { return score; }, get stepIdx() { return stepIdx; }, get traffic() { return traffic; }, get peds() { return peds; }, get crosswalks() { return crosswalks; }, get violations() { return violations; } };
 requestAnimationFrame(frame);
 })();

@@ -26,7 +26,7 @@ in `vendor/three.min.js`.)
 | --- | --- |
 | 1 · First steps | Seatbelt, engine, gear selector, cone slalom, stopping in a box |
 | 2 · Parking | Parking in a free bay between parked cars |
-| 3 · City exam | A set route through traffic with lights, lane discipline and turn signals |
+| 3 · City exam | A set route through traffic: lights, STOP signs, 30 km/h zones, zebra crossings, turn signals |
 | Free drive | The whole city, no route — mistakes are still called out |
 
 You start with 100 points. Finish with 70 or more to pass; dropping to 40 fails
@@ -34,13 +34,19 @@ the lesson on the spot.
 
 | Mistake | Penalty |
 | --- | --- |
+| Hitting a pedestrian | 60 |
 | Running a red light | 25 |
 | Collision (vehicle, parked car, building) | 20 |
+| Not stopping at a STOP sign, not giving way at a zebra crossing | 15 |
 | Driving on the wrong side / without a seatbelt | 10 |
-| Speeding (50 km/h city, 20 km/h training ground) | 5 |
+| Speeding (50 km/h city, 30 km/h zones, 20 km/h training ground) | 5 |
 | Leaving the road, knocking a cone, turning without a signal | 5 |
 
-The menu lets you choose whether traffic keeps left or right.
+Traffic keeps left by default (as in India); the menu can switch it to keep right.
+
+Pedestrians walk the pavements and cross at the zebra crossings. Road signs show
+the speed limit wherever it changes, mark the two all-way STOP junctions and warn
+of each crossing.
 
 ## Controls
 
