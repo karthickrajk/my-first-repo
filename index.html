@@ -53,6 +53,15 @@
   .tog.hold:active { background: var(--acc); color: #111; }
   .mirrors #nav { top: 110px; } .mirrors #toasts { top: 164px; }
   .manualOnly { display: none; }
+  #banner { position: fixed; top: 38%; left: 50%; transform: translate(-50%, -50%); padding: 14px 26px; font-size: 26px; font-weight: 800; text-align: center; max-width: 80vw; pointer-events: none; }
+  #banner.stop { background: rgba(200,20,20,.94); animation: flash .5s steps(2) infinite; }
+  #banner.good { background: rgba(20,140,80,.94); }
+  #banner.msg { border-color: var(--acc); }
+  @keyframes flash { 50% { opacity: .55; } }
+  /* three monitors: keep the HUD on the middle one (a transformed parent makes fixed children relative to it) */
+  .triple #hud { position: fixed; top: 0; bottom: 0; left: 33.333%; width: 33.334%; transform: translateZ(0); pointer-events: none; }
+  .triple #hud > * { pointer-events: auto; }
+  .triple .overlay { left: 33.333%; right: 33.333%; }
   #wheelRows { max-height: 52vh; overflow: auto; }
   .wrow { display: grid; grid-template-columns: 150px 1fr auto auto; gap: 10px; align-items: center; padding: 5px 0; border-bottom: 1px solid var(--line); font-size: 14px; }
   .wrow.lit .wname { color: var(--ok); }
@@ -114,6 +123,7 @@
   <div id="instructor" class="panel"><small id="stepNum" data-tr>Instructor</small><div id="stepText"></div></div>
   <div id="nav" class="panel" hidden><span id="navArrow">▲</span><span id="navDist"></span></div>
   <div id="toasts"></div>
+  <div id="banner" class="panel" hidden></div>
   <div id="topRight">
     <div id="scoreBox" class="panel"><div><small style="color:var(--dim)" data-tr>SCORE</small><div id="score">100</div></div><div id="limit">50</div></div>
     <canvas id="map" width="340" height="340"></canvas>
@@ -147,6 +157,11 @@
     <div class="row">
       <span data-tr>Transmission</span>
       <div class="seg" id="gearSel"><button data-manual="0" class="on" data-tr>Automatic</button><button data-manual="1" data-tr>Manual (clutch)</button></div>
+    </div>
+    <div class="row">
+      <span data-tr>Screens</span>
+      <div class="seg" id="screenSel"><button data-triple="0" class="on" data-tr>One</button><button data-triple="1" data-tr>Three</button></div>
+      <button class="btn" id="instrBtn" data-tr>Open instructor screen</button>
     </div>
     <div class="row">
       <span data-tr>Steering wheel / pedals</span>

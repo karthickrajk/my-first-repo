@@ -14,6 +14,29 @@ in `vendor/three.min.js`.)
 Every push to `master` publishes the game for free on GitHub Pages:
 https://karthickrajk.github.io/my-first-repo/
 
+## Three monitors
+
+Choose **Screens: Three** on the menu, then stretch the game window across
+three side-by-side monitors of the same size (or use NVIDIA Surround / AMD
+Eyefinity, which present them as one wide screen). The left, front and right
+views are angled so they join up, and the dashboard stays on the middle screen.
+Press `F11` for full screen.
+
+## Instructor screen
+
+Click **Open instructor screen** on the menu (allow pop-ups if the browser
+asks) and drag the new window to the instructor's monitor or laptop. It shows:
+
+- a live map of the car, traffic, pedestrians and the next target
+- speed, limit, gear, score, lesson time, belt/engine, and the pedals
+- a timed log of every step and mistake
+
+and lets the instructor start, restart, pause or end lessons, choose the
+gearbox, switch day/dusk/night and clear/rain/fog (rain lowers grip and
+braking), set the amount of traffic, turn pedestrians on or off, send
+messages that appear on the student's screen, and call an **emergency stop**
+that times how quickly the student stops (over 4 seconds costs 10 points).
+
 ## Steering wheel, pedals and controllers
 
 USB steering wheels with pedals (Logitech G29/G920/G923, Thrustmaster, Fanatec
@@ -112,4 +135,6 @@ dashboard buttons are tappable.
 
 - `index.html` — page, HUD and menus
 - `main.js` — world, car physics, traffic AI, rules and lessons
+- `instructor.html` — the instructor screen
+- `lang-ta.js` — Tamil translations
 - `vendor/three.min.js` — Three.js r170 (MIT licence, see `vendor/THREE-LICENSE`)

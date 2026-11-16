@@ -1,0 +1,263 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>DriveReady Instructor</title>
+<style>
+  :root { --bg: #11151c; --panel: #1a2029; --line: rgba(255,255,255,.12); --fg: #eef1f6; --dim: #93a0b2; --acc: #ffc530; --ok: #3ddc84; --bad: #ff5a52; --info: #6ab0ff; }
+  * { box-sizing: border-box; }
+  [hidden] { display: none !important; }
+  html, body { margin: 0; height: 100%; background: var(--bg); color: var(--fg); font: 14px/1.4 system-ui, -apple-system, "Segoe UI", Roboto, "Noto Sans Tamil", "Nirmala UI", Latha, sans-serif; }
+  button, select, input { font: inherit; color: inherit; }
+  .app { display: grid; grid-template-columns: minmax(0, 1fr) 380px; grid-template-rows: auto minmax(0, 1fr); gap: 12px; height: 100%; padding: 12px; }
+  header { grid-column: 1 / -1; display: flex; align-items: center; gap: 14px; flex-wrap: wrap; }
+  header h1 { margin: 0; font-size: 20px; } header h1 span { color: var(--acc); }
+  #conn { font-size: 12px; padding: 3px 10px; border-radius: 999px; background: rgba(255,90,82,.18); color: var(--bad); font-weight: 700; }
+  #conn.on { background: rgba(61,220,132,.16); color: var(--ok); }
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 12px; }
+  .left { display: grid; grid-template-rows: auto minmax(0, 1fr); gap: 12px; min-height: 0; }
+  .tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(96px, 1fr)); gap: 8px; }
+  .tile { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 8px 10px; }
+  .tile small { color: var(--dim); font-size: 11px; text-transform: uppercase; letter-spacing: .05em; }
+  .tile b { display: block; font-size: 22px; font-variant-numeric: tabular-nums; }
+  .tile b.bad { color: var(--bad); } .tile b.ok { color: var(--ok); }
+  .mapwrap { position: relative; min-height: 0; padding: 0; overflow: hidden; }
+  #map { width: 100%; height: 100%; display: block; }
+  .mapbar { position: absolute; top: 8px; right: 8px; display: flex; gap: 6px; }
+  #stepBox { position: absolute; left: 8px; bottom: 8px; right: 8px; background: rgba(10,13,18,.85); border-radius: 8px; padding: 8px 10px; font-size: 13px; }
+  #stepBox small { color: var(--acc); font-weight: 700; }
+  .right { display: flex; flex-direction: column; gap: 12px; min-height: 0; overflow: auto; }
+  h2 { margin: 0 0 8px; font-size: 13px; text-transform: uppercase; letter-spacing: .06em; color: var(--dim); }
+  .row { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
+  .row + .row { margin-top: 8px; }
+  .btn { padding: 7px 12px; border-radius: 8px; border: 1px solid var(--line); background: rgba(255,255,255,.06); cursor: pointer; font-weight: 600; }
+  .btn:hover { border-color: var(--acc); }
+  .btn.on { background: var(--acc); color: #111; border-color: var(--acc); }
+  .btn.primary { background: var(--acc); color: #111; border-color: var(--acc); }
+  .btn.danger { background: var(--bad); border-color: var(--bad); color: #fff; width: 100%; padding: 12px; font-size: 16px; font-weight: 800; }
+  select, input[type=text] { background: #0f1319; border: 1px solid var(--line); border-radius: 8px; padding: 7px 9px; }
+  select { flex: 1; min-width: 0; }
+  input[type=text] { flex: 1; min-width: 0; }
+  label.lbl { color: var(--dim); min-width: 92px; }
+  input[type=range] { flex: 1; accent-color: var(--acc); }
+  .quick { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 8px; }
+  .quick button { font-size: 12px; padding: 4px 8px; }
+  #log { list-style: none; margin: 0; padding: 0; max-height: 280px; overflow: auto; font-size: 13px; }
+  #log li { display: grid; grid-template-columns: 52px 1fr auto; gap: 8px; padding: 4px 0; border-bottom: 1px solid var(--line); }
+  #log time { color: var(--dim); font-variant-numeric: tabular-nums; }
+  #log .pen { color: var(--bad); } #log .good, #log .step { color: var(--ok); } #log .msg { color: var(--acc); } #log .info { color: var(--info); }
+  .pedals { display: grid; grid-template-columns: auto 1fr; gap: 4px 8px; align-items: center; font-size: 12px; color: var(--dim); margin-top: 8px; }
+  .bar { height: 7px; border-radius: 4px; background: rgba(255,255,255,.1); overflow: hidden; }
+  .bar i { display: block; height: 100%; width: 0; }
+  @media (max-width: 860px) { .app { grid-template-columns: 1fr; height: auto; } .mapwrap { height: 60vh; } }
+</style>
+</head>
+<body>
+<div class="app">
+  <header>
+    <h1>Drive<span>Ready</span> · <span data-tr>Instructor</span></h1>
+    <span id="conn" data-tr>Not connected</span>
+    <span id="lessonName" style="color:var(--dim)"></span>
+  </header>
+
+  <div class="left">
+    <div class="tiles">
+      <div class="tile"><small data-tr>Speed</small><b id="tSpeed">–</b></div>
+      <div class="tile"><small data-tr>Limit</small><b id="tLimit">–</b></div>
+      <div class="tile"><small data-tr>Gear</small><b id="tGear">–</b></div>
+      <div class="tile"><small data-tr>Score</small><b id="tScore">–</b></div>
+      <div class="tile"><small data-tr>Time</small><b id="tTime">–</b></div>
+      <div class="tile"><small data-tr>Car</small><b id="tCar" style="font-size:13px;line-height:1.5">–</b></div>
+    </div>
+    <div class="card mapwrap">
+      <canvas id="map"></canvas>
+      <div class="mapbar"><button class="btn on" id="follow" data-tr>Follow car</button><button class="btn" id="whole" data-tr>Whole city</button></div>
+      <div id="stepBox"><small id="stepNo"></small> <span id="stepText"></span></div>
+    </div>
+  </div>
+
+  <div class="right">
+    <div class="card">
+      <h2 data-tr>Lesson</h2>
+      <div class="row"><select id="lessonSel"></select><button class="btn primary" id="start" data-tr>Start</button></div>
+      <div class="row">
+        <button class="btn" id="restart" data-tr>Restart</button>
+        <button class="btn" id="pause" data-tr>Pause</button>
+        <button class="btn" id="resume" data-tr>Resume</button>
+        <button class="btn" id="menu" data-tr>End</button>
+      </div>
+      <div class="row"><label class="lbl" data-tr>Gearbox</label>
+        <button class="btn" data-gearbox="0" data-tr>Automatic</button><button class="btn" data-gearbox="1" data-tr>Manual</button></div>
+      <div class="pedals">
+        <span data-tr>Accelerator</span><div class="bar"><i id="bGas" style="background:var(--ok)"></i></div>
+        <span data-tr>Brake</span><div class="bar"><i id="bBrake" style="background:var(--bad)"></i></div>
+        <span data-tr>Clutch</span><div class="bar"><i id="bClutch" style="background:var(--info)"></i></div>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2 data-tr>Conditions</h2>
+      <div class="row"><label class="lbl" data-tr>Time of day</label>
+        <button class="btn" data-time="day" data-tr>Day</button><button class="btn" data-time="dusk" data-tr>Dusk</button><button class="btn" data-time="night" data-tr>Night</button></div>
+      <div class="row"><label class="lbl" data-tr>Weather</label>
+        <button class="btn" data-weather="clear" data-tr>Clear</button><button class="btn" data-weather="rain" data-tr>Rain</button><button class="btn" data-weather="fog" data-tr>Fog</button></div>
+      <div class="row"><label class="lbl" data-tr>Traffic</label><input type="range" id="traffic" min="0" max="40" step="2"><b id="trafficN" style="min-width:24px;text-align:right"></b></div>
+      <div class="row"><label class="lbl" data-tr>Pedestrians</label>
+        <button class="btn" data-peds="1" data-tr>On</button><button class="btn" data-peds="0" data-tr>Off</button></div>
+    </div>
+
+    <div class="card">
+      <h2 data-tr>Talk to the student</h2>
+      <div class="row"><input type="text" id="msg" maxlength="140" placeholder=""><button class="btn primary" id="send" data-tr>Send</button></div>
+      <div class="quick" id="quick"></div>
+      <div class="row" style="margin-top:12px"><button class="btn danger" id="estop" data-tr>EMERGENCY STOP</button></div>
+    </div>
+
+    <div class="card" style="flex:1;min-height:180px">
+      <h2 data-tr>Lesson log</h2>
+      <ul id="log"></ul>
+    </div>
+  </div>
+</div>
+
+<script src="lang-ta.js"></script>
+<script>
+'use strict';
+(() => {
+  const $ = id => document.getElementById(id);
+  let lang = 'en', world = null, st = null, lastMsg = 0, follow = true;
+  const tr = s => (lang === 'ta' && window.LANG_TA && window.LANG_TA[s]) || s;
+  const QUICK = ['Check your mirrors', 'Slow down', 'Signal now', 'Well done', 'Keep left', 'Stop at the line', 'Watch the pedestrian', 'Pull over and stop'];
+
+  // ---- link to the game: the window that opened us, or the same-site channel
+  const opener = window.opener;
+  let bc = null; try { bc = new BroadcastChannel('driveready'); } catch (e) { bc = null; }
+  const send = m => { try { if (opener && !opener.closed) opener.postMessage(m, '*'); else if (bc) bc.postMessage(m); } catch (e) { /* game closed */ } };
+  const onMsg = m => {
+    if (!m || typeof m !== 'object') return;
+    if (m.type === 'world') world = m;
+    else if (m.type === 'state') { st = m; lastMsg = performance.now(); if (st.lang !== lang) { lang = st.lang; applyLang(); } render(); }
+  };
+  window.addEventListener('message', e => { if (opener && e.source === opener) onMsg(e.data); });
+  if (bc) bc.onmessage = e => onMsg(e.data);
+  const hello = () => send({ cmd: 'hello' });
+  hello(); setInterval(() => { if (!world) hello(); }, 1500);
+
+  // ---- language
+  function applyLang() {
+    document.documentElement.lang = lang;
+    for (const el of document.querySelectorAll('[data-tr]')) { el.dataset.en = el.dataset.en || el.textContent; el.textContent = tr(el.dataset.en); }
+    $('msg').placeholder = tr('Type a message…');
+    $('quick').innerHTML = '';
+    for (const q of QUICK) { const b = document.createElement('button'); b.className = 'btn'; b.textContent = tr(q); b.onclick = () => send({ cmd: 'msg', text: tr(q) }); $('quick').appendChild(b); }
+    lessonsKey = '';
+  }
+
+  // ---- controls
+  $('start').onclick = () => send({ cmd: 'start', id: $('lessonSel').value });
+  for (const id of ['restart', 'pause', 'resume', 'menu']) $(id).onclick = () => send({ cmd: id });
+  $('estop').onclick = () => send({ cmd: 'estop' });
+  const sendMsg = () => { const t = $('msg').value.trim(); if (t) { send({ cmd: 'msg', text: t }); $('msg').value = ''; } };
+  $('send').onclick = sendMsg; $('msg').onkeydown = e => { if (e.key === 'Enter') sendMsg(); };
+  for (const b of document.querySelectorAll('[data-time]')) b.onclick = () => send({ cmd: 'env', time: b.dataset.time });
+  for (const b of document.querySelectorAll('[data-weather]')) b.onclick = () => send({ cmd: 'env', weather: b.dataset.weather });
+  for (const b of document.querySelectorAll('[data-peds]')) b.onclick = () => send({ cmd: 'peds', on: b.dataset.peds === '1' });
+  for (const b of document.querySelectorAll('[data-gearbox]')) b.onclick = () => send({ cmd: 'gearbox', manual: b.dataset.gearbox === '1' });
+  $('traffic').oninput = () => { $('trafficN').textContent = $('traffic').value; };
+  $('traffic').onchange = () => send({ cmd: 'traffic', n: +$('traffic').value });
+  $('follow').onclick = () => { follow = true; $('follow').classList.add('on'); $('whole').classList.remove('on'); };
+  $('whole').onclick = () => { follow = false; $('whole').classList.add('on'); $('follow').classList.remove('on'); };
+
+  // ---- status panel
+  let lessonsKey = '', logKey = '';
+  const fmt = t => `${Math.floor(t / 60)}:${String(Math.floor(t % 60)).padStart(2, '0')}`;
+  function render() {
+    const s = st;
+    const key = s.lessons.map(l => l.id + l.title).join();
+    if (key !== lessonsKey) {
+      lessonsKey = key; const cur = $('lessonSel').value;
+      $('lessonSel').innerHTML = '';
+      for (const l of s.lessons) { const o = document.createElement('option'); o.value = l.id; o.textContent = l.title; $('lessonSel').appendChild(o); }
+      if (cur) $('lessonSel').value = cur;
+    }
+    const running = s.state === 'run' || s.state === 'pause';
+    $('lessonName').textContent = running || s.state === 'end' ? s.title + (s.state === 'pause' ? ' · ' + tr('Paused') : s.state === 'end' ? ' · ' + tr('Finished') : '') : tr('In the menu');
+    $('tSpeed').textContent = s.kmh + ' ' + tr('km/h'); $('tSpeed').className = s.kmh > s.limit + 3 ? 'bad' : '';
+    $('tLimit').textContent = s.limit;
+    $('tGear').textContent = s.gear + (s.hand ? ' · P' : '');
+    $('tScore').textContent = s.score; $('tScore').className = s.score >= 70 ? 'ok' : 'bad';
+    $('tTime').textContent = running || s.state === 'end' ? fmt(s.t) : '–';
+    $('tCar').innerHTML = '';
+    $('tCar').textContent = [s.engine ? tr('Engine on') : tr('Engine off'), s.belt ? tr('Belt on') : tr('No belt'), s.signal === 1 ? '⬅' : s.signal === -1 ? '➡' : ''].filter(Boolean).join(' · ');
+    $('stepNo').textContent = s.steps ? `${s.stepNo} / ${s.steps}` : '';
+    $('stepText').textContent = running ? s.stepText : '';
+    $('stepBox').hidden = !running;
+    $('bGas').style.width = s.gas * 100 + '%'; $('bBrake').style.width = s.brake * 100 + '%'; $('bClutch').style.width = s.clutch * 100 + '%';
+    for (const b of document.querySelectorAll('[data-time]')) b.classList.toggle('on', b.dataset.time === s.env.time);
+    for (const b of document.querySelectorAll('[data-weather]')) b.classList.toggle('on', b.dataset.weather === s.env.weather);
+    for (const b of document.querySelectorAll('[data-peds]')) b.classList.toggle('on', (b.dataset.peds === '1') === s.pedsOn);
+    for (const b of document.querySelectorAll('[data-gearbox]')) { b.classList.toggle('on', (b.dataset.gearbox === '1') === s.manual); b.disabled = s.state === 'run'; }
+    if (document.activeElement !== $('traffic')) { $('traffic').value = s.trafficN; $('trafficN').textContent = s.trafficN; }
+    const lk = s.log.length + ':' + (s.log.length ? s.log[s.log.length - 1].t : '');
+    if (lk !== logKey) {
+      logKey = lk; $('log').innerHTML = '';
+      for (const e of [...s.log].reverse()) {
+        const li = document.createElement('li'); li.className = e.kind;
+        li.innerHTML = '<time></time><span></span><b></b>';
+        li.children[0].textContent = fmt(e.t); li.children[1].textContent = e.text; li.children[2].textContent = e.pts ? '−' + e.pts : '';
+        $('log').appendChild(li);
+      }
+    }
+  }
+  setInterval(() => {
+    const on = performance.now() - lastMsg < 2000;
+    $('conn').classList.toggle('on', on);
+    $('conn').textContent = tr(on ? 'Connected' : 'Not connected — open this screen from the game menu');
+  }, 500);
+
+  // ---- live map
+  const cv = $('map'), g = cv.getContext('2d');
+  function draw() {
+    requestAnimationFrame(draw);
+    const dpr = window.devicePixelRatio || 1, w = cv.clientWidth, h = cv.clientHeight;
+    if (cv.width !== Math.round(w * dpr) || cv.height !== Math.round(h * dpr)) { cv.width = Math.round(w * dpr); cv.height = Math.round(h * dpr); }
+    g.setTransform(dpr, 0, 0, dpr, 0, 0);
+    g.fillStyle = '#2c4a2a'; g.fillRect(0, 0, w, h);
+    if (!world || !st) { g.fillStyle = '#93a0b2'; g.font = '15px system-ui'; g.textAlign = 'center'; g.fillText(tr('Waiting for the game…'), w / 2, h / 2); return; }
+    const { G, S, W, LOT } = world, HALF = G * S;
+    // view: follow the car, or fit city and training ground
+    let cx, cz, sc;
+    if (follow) { cx = st.car[0]; cz = st.car[1]; sc = Math.min(w, h) / 150; }
+    else { const x0 = -HALF - 20, x1 = LOT.x1 + 10; cx = (x0 + x1) / 2; cz = 0; sc = Math.min(w / (x1 - x0), h / (2 * HALF + 40)); }
+    const X = x => w / 2 + (x - cx) * sc, Z = z => h / 2 + (z - cz) * sc;
+    g.fillStyle = '#3a3e45'; g.fillRect(X(LOT.x0), Z(LOT.z0), (LOT.x1 - LOT.x0) * sc, (LOT.z1 - LOT.z0) * sc);
+    g.fillStyle = '#b9b9b1';
+    for (let i = -G; i < G; i++) for (let j = -G; j < G; j++) g.fillRect(X(i * S + W / 2), Z(j * S + W / 2), (S - W) * sc, (S - W) * sc);
+    g.strokeStyle = '#4a4e56'; g.lineWidth = W * sc; g.beginPath();
+    for (let k = -G; k <= G; k++) { g.moveTo(X(-HALF - W / 2), Z(k * S)); g.lineTo(X(HALF + W / 2), Z(k * S)); g.moveTo(X(k * S), Z(-HALF - W / 2)); g.lineTo(X(k * S), Z(HALF + W / 2)); }
+    g.stroke();
+    g.strokeStyle = 'rgba(242,194,48,.7)'; g.lineWidth = Math.max(1, 0.25 * sc); g.setLineDash([3 * sc, 3 * sc]); g.beginPath();
+    for (let k = -G; k <= G; k++) { g.moveTo(X(-HALF), Z(k * S)); g.lineTo(X(HALF), Z(k * S)); g.moveTo(X(k * S), Z(-HALF)); g.lineTo(X(k * S), Z(HALF)); }
+    g.stroke(); g.setLineDash([]);
+    g.fillStyle = '#fff';
+    for (const c of world.crosswalks) for (let u = -W / 2 + 0.75; u < W / 2; u += 1.05)
+      c.ax === 'x' ? g.fillRect(X(c.x - 1.5), Z(c.z + u - 0.27), 3 * sc, 0.55 * sc) : g.fillRect(X(c.x + u - 0.27), Z(c.z - 1.5), 0.55 * sc, 3 * sc);
+    g.fillStyle = '#c8102e';
+    for (const k of world.stops) { const [i, j] = k.split(',').map(Number); g.beginPath(); g.arc(X(i * S), Z(j * S), Math.max(4, 1.6 * sc), 0, 7); g.fill(); }
+    g.fillStyle = '#dfe6f0';
+    for (const [x, z] of st.traffic) g.fillRect(X(x) - Math.max(2.5, sc), Z(z) - Math.max(2.5, sc), Math.max(5, 2 * sc), Math.max(5, 2 * sc));
+    g.fillStyle = '#7dffa8';
+    for (const [x, z] of st.peds) { g.beginPath(); g.arc(X(x), Z(z), Math.max(2, 0.5 * sc), 0, 7); g.fill(); }
+    if (st.target) { g.strokeStyle = '#ffc530'; g.lineWidth = 3; g.beginPath(); g.arc(X(st.target[0]), Z(st.target[1]), Math.max(7, 3 * sc), 0, 7); g.stroke(); }
+    const [x, z, th] = st.car, len = Math.max(10, 2.4 * sc);
+    g.save(); g.translate(X(x), Z(z)); g.rotate(-th + Math.PI);
+    g.fillStyle = '#ff4b3e'; g.strokeStyle = '#fff'; g.lineWidth = 1.5;
+    g.beginPath(); g.moveTo(0, -len); g.lineTo(len * 0.6, len * 0.7); g.lineTo(0, len * 0.35); g.lineTo(-len * 0.6, len * 0.7); g.closePath(); g.fill(); g.stroke();
+    g.restore();
+  }
+  applyLang(); draw();
+})();
+</script>
+</body>
+</html>

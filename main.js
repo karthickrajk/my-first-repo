@@ -46,6 +46,8 @@ function resize() {
 window.addEventListener('resize', resize);
 resize();
 
+let triple = false;     // three-monitor view: left, front and right panels side by side
+
 // ---------------------------------------------------------------- mirrors
 // Each mirror is a rear-facing camera on the car rendered to a texture, then drawn flipped on a screen overlay.
 const overlay = new T.Scene(), overlayCam = new T.OrthographicCamera(0, 1, 1, 0, -1, 1);
@@ -66,14 +68,15 @@ const mirrors = [
   return m;
 });
 function layoutMirrors() {
-  const W_ = window.innerWidth, H_ = window.innerHeight, small = W_ < 720;
+  const full = window.innerWidth, H_ = window.innerHeight, x0 = triple ? full / 3 : 0, W_ = triple ? full / 3 : full, small = W_ < 720;
+  overlayCam.right = full; overlayCam.top = H_; overlayCam.updateProjectionMatrix();
   overlayCam.right = W_; overlayCam.top = H_; overlayCam.updateProjectionMatrix();
   const sides = W_ >= 900 && H_ >= 560;
   for (const m of mirrors) {
     const centre = m.id === 'centre';
     const w = centre ? (small ? 190 : 300) : 190, h = centre ? (small ? 54 : 84) : 124;
     m.show = centre || sides;
-    const cx = centre ? W_ / 2 : m.id === 'left' ? 12 + w / 2 : W_ - 12 - w / 2, cy = H_ - (centre ? 12 : 270) - h / 2;
+    const cx = x0 + (centre ? W_ / 2 : m.id === 'left' ? 12 + w / 2 : W_ - 12 - w / 2), cy = H_ - (centre ? 12 : 270) - h / 2;
     m.quad.position.set(cx, cy, 0); m.quad.scale.set(-w, h, 1);   // negative width = mirror image
     m.frame.position.set(cx, cy, 0); m.frame.scale.set(w + 8, h + 8, 1);
     m.cam.aspect = w / h; m.cam.updateProjectionMatrix();
@@ -85,6 +88,9 @@ layoutMirrors();
 
 // ---------------------------------------------------------------- state
 let manual = false;     // manual gearbox with clutch instead of the automatic
+let env = { time: 'day', weather: 'clear' }, trafficN = 16, pedsOn = true;
+let hemi = null, headlights = null, rain = null;
+let evLog = [], lessonT0 = 0, estop = null;
 let side = -1;           // -1 = traffic keeps left (default, as in India), 1 = keeps right
 let scene, sun, nodes, colliders, drivable, ring, lessonGroup, playerMesh;
 let traffic = [], cones = [], statics = [], peds = [], crosswalks = [];
@@ -273,7 +279,7 @@ function buildWorld() {
   scene = new T.Scene();
   scene.background = new T.Color(0x9fd0ff);
   scene.fog = new T.Fog(0x9fd0ff, 140, 520);
-  scene.add(new T.HemisphereLight(0xffffff, 0x5a6b4a, 1.25));
+  hemi = new T.HemisphereLight(0xffffff, 0x5a6b4a, 1.25); scene.add(hemi);
   sun = new T.DirectionalLight(0xfff3dd, 1.9);
   sun.castShadow = true;
   sun.shadow.mapSize.set(2048, 2048);
@@ -386,8 +392,9 @@ function buildWorld() {
   playerMesh = makeCar(0xd32f2f, true); scene.add(playerMesh);
   playerMesh.rotation.order = 'YXZ';   // heading first, then pitch on slopes
   for (const m of mirrors) playerMesh.add(m.cam);
-  spawnTraffic(16);
-  spawnPeds();
+  spawnTraffic(trafficN);
+  if (pedsOn) spawnPeds(); else peds = [];
+  headlights = null; rain = null; applyEnv();
 }
 
 function lightState(n, axis) {
@@ -774,6 +781,113 @@ const LESSONS = [
     } },
 ];
 
+// ---------------------------------------------------------------- time of day and weather (set from the instructor screen)
+const SKY = { day: [0x9fd0ff, 1.25, 1.9, 0xfff3dd], dusk: [0xe9a07a, 0.7, 0.9, 0xffb37a], night: [0x0b1020, 0.16, 0.05, 0x8899ff] };
+function applyEnv() {
+  if (!scene) return;
+  const [sky, hI, sI, sC] = SKY[env.time];
+  const c = new T.Color(env.weather === 'clear' ? sky : env.time === 'night' ? 0x1a1e26 : env.weather === 'fog' ? 0xc4c9cf : 0x8b939c);
+  if (env.weather === 'rain' && env.time !== 'night') c.multiplyScalar(env.time === 'dusk' ? 0.75 : 1);
+  scene.background = c;
+  scene.fog = new T.Fog(c, env.weather === 'fog' ? 8 : env.weather === 'rain' ? 40 : env.time === 'night' ? 60 : 140, env.weather === 'fog' ? 75 : env.weather === 'rain' ? 220 : env.time === 'night' ? 260 : 520);
+  hemi.intensity = hI * (env.weather === 'clear' ? 1 : 0.8); sun.intensity = sI * (env.weather === 'clear' ? 1 : 0.35); sun.color.setHex(sC);
+  if (!headlights) {   // two forward spot lights on the learner car
+    headlights = [1, -1].map(sx => {
+      const l = new T.SpotLight(0xfff4d6, 0, 70, 0.5, 0.5, 1.2);
+      l.position.set(sx * 0.6, 0.75, 2.1); l.target.position.set(sx * 0.6, 0, 22);
+      playerMesh.add(l, l.target); return l;
+    });
+  }
+  const dark = env.time !== 'day' || env.weather !== 'clear';
+  headlights.forEach(l => { l.intensity = env.time === 'night' ? 60 : dark ? 25 : 0; });
+  if (!rain) {
+    const n = 2400, pos = new Float32Array(n * 6);
+    for (let i = 0; i < n; i++) { const x = (Math.random() - 0.5) * 80, y = Math.random() * 30, z = (Math.random() - 0.5) * 80; pos.set([x, y, z, x, y - 0.6, z], i * 6); }
+    const g = new T.BufferGeometry(); g.setAttribute('position', new T.BufferAttribute(pos, 3));
+    rain = new T.LineSegments(g, new T.LineBasicMaterial({ color: 0xaab4c4, transparent: true, opacity: 0.5 }));
+    rain.frustumCulled = false; scene.add(rain);
+  }
+  rain.visible = env.weather === 'rain';
+}
+function updateRain(dt) {   // drops fall and wrap inside a box that follows the camera
+  if (!rain || !rain.visible) return;
+  const p = rain.geometry.attributes.position.array, cx = camera.position.x, cz = camera.position.z;
+  for (let i = 0; i < p.length; i += 6) {
+    let y = p[i + 1] - 22 * dt;
+    if (y < 0) { y += 30; p[i] = cx + (Math.random() - 0.5) * 80; p[i + 2] = cz + (Math.random() - 0.5) * 80; }
+    p[i + 1] = y; p[i + 4] = y - 0.6; p[i + 3] = p[i]; p[i + 5] = p[i + 2];
+  }
+  rain.geometry.attributes.position.needsUpdate = true;
+}
+const wet = () => env.weather === 'rain';
+
+// ---------------------------------------------------------------- instructor screen link
+// The instructor window is opened from the menu. Messages go through postMessage (works even from a
+// local file) and a BroadcastChannel (for an instructor page opened separately on the same site).
+let instrWin = null, bc = null, lastSend = 0;
+try { bc = new BroadcastChannel('driveready'); bc.onmessage = e => onCmd(e.data); } catch (e) { bc = null; }
+window.addEventListener('message', e => { if (instrWin && e.source === instrWin) onCmd(e.data); });
+function sendInstr(msg) {
+  try { if (instrWin && !instrWin.closed) instrWin.postMessage(msg, '*'); } catch (e) { /* window gone */ }
+  try { if (bc) bc.postMessage(msg); } catch (e) { /* channel closed */ }
+}
+function openInstructor() {
+  instrWin = window.open('instructor.html', 'driveready-instructor', 'width=1180,height=780');
+  if (!instrWin) toast('Allow pop-ups for this page to open the instructor screen', 'info');
+}
+function logEvent(kind, text, pts) { evLog.push({ t: Math.max(0, clock - lessonT0), kind, text, pts }); if (evLog.length > 200) evLog.shift(); }
+function showBanner(text, cls, secs) {
+  const b = $('banner'); b.textContent = text; b.className = 'panel ' + (cls || ''); b.hidden = false;
+  clearTimeout(showBanner.t); if (secs) showBanner.t = setTimeout(() => { b.hidden = true; }, secs * 1000);
+}
+function onCmd(m) {
+  if (!m || typeof m !== 'object' || !m.cmd) return;
+  switch (m.cmd) {
+    case 'hello': sendWorld(); break;
+    case 'start': { const l = LESSONS.find(x => x.id === m.id); if (l) startLesson(l); break; }
+    case 'restart': if (lesson) startLesson(lesson); break;
+    case 'pause': if (state === 'run') togglePause(); break;
+    case 'resume': if (state === 'pause') togglePause(); break;
+    case 'menu': toMenu(); break;
+    case 'env': if (SKY[m.time]) env.time = m.time; if (['clear', 'rain', 'fog'].includes(m.weather)) env.weather = m.weather; applyEnv(); break;
+    case 'traffic': trafficN = clamp(+m.n || 0, 0, 40); spawnTraffic(trafficN); break;
+    case 'peds': pedsOn = !!m.on; for (const p of peds) scene.remove(p.mesh); peds = []; if (pedsOn) spawnPeds(); break;
+    case 'gearbox': if (state !== 'run') { manual = !!m.manual; try { localStorage.setItem('driveready.manual', manual ? '1' : '0'); } catch (e) { /* storage unavailable */ } applyGearbox(); } break;
+    case 'msg': { const t = String(m.text || '').slice(0, 140); if (t) { showBanner(t, 'msg', 8); logEvent('msg', t); beep(660, 0.1); } break; }
+    case 'estop':
+      if (state !== 'run') break;
+      estop = { t0: clock }; showBanner(tr('EMERGENCY STOP!'), 'stop', 0); logEvent('info', tr('Instructor called an emergency stop')); beep(1000, 0.25);
+      break;
+  }
+  sendState(true);
+}
+function sendWorld() {
+  sendInstr({ type: 'world', G, S, W, LOT, crosswalks: crosswalks.map(c => ({ x: c.x, z: c.z, ax: c.ax })), stops: [...STOP_NODES] });
+}
+function sendState(now) {
+  if (!now && clock - lastSend < 0.2) return;
+  lastSend = clock;
+  const s = steps[stepIdx], tgt = s && (s.type === 'cp' ? s : s.box);
+  const r = v => Math.round(v * 10) / 10;
+  sendInstr({ type: 'state', lang, state, manual, env, trafficN, pedsOn, triple,
+    lessons: LESSONS.map(l => ({ id: l.id, title: tr(l.title) })),
+    lesson: lesson ? lesson.id : null, title: lesson ? tr(lesson.title) : '',
+    stepNo: Math.min(stepIdx + 1, steps.length), steps: steps.length, stepText: $('stepText').textContent,
+    kmh: Math.round(Math.abs(car.v) * 3.6), limit: curLimit, gear: car.gear, engine: car.engine, belt: car.belt, hand: car.hand, signal: car.signal,
+    gas: r(inp.gas), brake: r(inp.brake), clutch: r(car.clutch), score: Math.max(0, score), t: r(Math.max(0, clock - lessonT0)),
+    car: [r(car.x), r(car.z), Math.round(car.th * 100) / 100], target: tgt ? [r(tgt.x), r(tgt.z)] : null,
+    traffic: traffic.map(c => [r(c.x), r(c.z)]), peds: peds.map(p => [r(p.x), r(p.z)]), log: evLog.slice(-80) });
+}
+function updateEstop() {
+  if (!estop || state !== 'run') return;
+  if (Math.abs(car.v) < 0.2) {
+    const secs = clock - estop.t0; estop = null;
+    showBanner(TL`Stopped in ${secs.toFixed(1)} s`, secs > 4 ? 'stop' : 'good', 3);
+    logEvent('info', TL`Emergency stop: stopped in ${secs.toFixed(1)} s`);
+    if (secs > 4 && steps.length) penalize('Slow emergency stop', 10, 0);
+  }
+}
+
 // ---------------------------------------------------------------- game flow
 function startLesson(l) {
   lesson = l;
@@ -784,7 +898,9 @@ function startLesson(l) {
   Object.assign(car, built.start, { v: 0, steer: 0, gear: manual ? 'N' : 'P', engine: false, belt: false, signal: 0, clutch: 0, hand: manual, rpm: 0 });
   score = 100; violations = {}; lastPen = {}; wrongT = 0; curNode = null; activeBox = null;
   curLimit = limitAt(car.x, car.z) || 50; limitSince = clock; stopNode = null;
-  spawnTraffic(16);
+  spawnTraffic(trafficN);
+  evLog = []; lessonT0 = clock; estop = null; $('banner').hidden = true;
+  logEvent('info', TL`Lesson started: ${tr(l.title)}`);
   camera.position.set(car.x - Math.sin(car.th) * 9, 5, car.z - Math.cos(car.th) * 9);
   $('toasts').innerHTML = '';
   for (const id of ['menu', 'pause', 'result']) $(id).hidden = true;
@@ -815,6 +931,8 @@ function stepDone(s) {
 }
 function finish(passed, why) {
   state = 'end';
+  logEvent(passed ? 'good' : 'pen', TL`${tr(passed ? 'Lesson passed' : 'Lesson failed')} — score ${Math.max(0, score)}`);
+  sendState(true);
   $('hud').hidden = true; $('result').hidden = false;
   $('resTitle').textContent = tr(passed ? 'Lesson passed' : 'Lesson failed');
   $('resTitle').className = passed ? 'pass' : 'fail';
@@ -829,6 +947,7 @@ function finish(passed, why) {
 }
 function toMenu() {
   state = 'menu'; lesson = null; startPose = null;
+  estop = null; $('banner').hidden = true;
   for (const id of ['hud', 'pause', 'result']) $(id).hidden = true;
   $('menu').hidden = false; ring.visible = false;
 }
@@ -845,6 +964,7 @@ function penalize(name, pts, cooldown) {
   const label = tr(name);   // shown and listed in the player's language
   const v = violations[label] || (violations[label] = { n: 0, pts: 0 }); v.n++; v.pts += pts;
   toast(`${label}  −${pts}`);
+  logEvent('pen', label, pts);
   beep(180, 0.18);
   if (steps.length && score <= FAIL_SCORE) finish(false, 'Too many serious mistakes.');
 }
@@ -1080,7 +1200,7 @@ function openWheel() { $('wheel').hidden = false; renderWheelUI(); }
 function updateCar(dt) {
   const px = car.x, pz = car.z, pth = car.th;
   const st = inp.steer, vabs = Math.abs(car.v), gas = inp.gas > 0.02;
-  const maxSt = Math.min(0.6, Math.atan(WB * 7 / Math.max(vabs * vabs, 1)));   // limits cornering grip at speed
+  const maxSt = Math.min(0.6, Math.atan(WB * (wet() ? 4.5 : 7) / Math.max(vabs * vabs, 1)));   // limits cornering grip at speed
   const rate = (inp.wheel ? 6 : st ? 1.5 : 3) * dt;   // a real wheel is followed almost directly
   car.steer = clamp(car.steer + clamp(st * maxSt - car.steer, -rate, rate), -maxSt, maxSt);
 
@@ -1113,7 +1233,7 @@ function updateCar(dt) {
   } else if (!car.engine && gas && clock - (lastPen._hint ?? -9) > 4) { lastPen._hint = clock; toast('Engine is off — press I', 'info'); }
   const slope = slopeAhead();
   car.v += (acc - 9.81 * slope / Math.hypot(1, slope)) * dt;
-  const dec = (0.35 + 0.0005 * vabs * vabs + inp.brake * 9 + (car.hand ? 12 : 0) + (car.gear === 'P' ? 20 : 0)) * dt;
+  const dec = (0.35 + 0.0005 * vabs * vabs + inp.brake * (wet() ? 6 : 9) + (car.hand ? 12 : 0) + (car.gear === 'P' ? 20 : 0)) * dt;
   car.v = Math.abs(car.v) <= dec ? 0 : car.v - Math.sign(car.v) * dec;
 
   car.x += Math.sin(car.th) * car.v * dt;
@@ -1241,6 +1361,35 @@ function updateCamera(dt) {
   sun.target.position.copy(camTarget);
 }
 
+// ---------------------------------------------------------------- three-monitor rendering
+// Each third of the window is one monitor. The side cameras turn by exactly one panel's horizontal
+// field of view, so the three pictures join up into one wide view.
+const sideCam = new T.PerspectiveCamera();
+function renderMain() {
+  const W_ = window.innerWidth, H_ = window.innerHeight, wide = triple && camMode !== 2 && state !== 'menu';
+  const fov = wide ? 34 : 62, aspect = wide ? W_ / 3 / H_ : W_ / H_;
+  if (camera.fov !== fov || Math.abs(camera.aspect - aspect) > 1e-4) { camera.fov = fov; camera.aspect = aspect; camera.updateProjectionMatrix(); }
+  if (!wide) { renderer.setScissorTest(false); renderer.setViewport(0, 0, W_, H_); renderer.render(scene, camera); return; }
+  const w = W_ / 3, hf = 2 * Math.atan(Math.tan(fov * Math.PI / 360) * aspect);
+  sideCam.copy(camera);
+  renderer.setScissorTest(true);
+  for (let i = 0; i < 3; i++) {
+    sideCam.position.copy(camera.position); sideCam.quaternion.copy(camera.quaternion);
+    sideCam.rotateY((1 - i) * hf);   // panel 0 looks left, 2 looks right
+    sideCam.updateMatrixWorld();
+    renderer.setViewport(i * w, 0, w, H_); renderer.setScissor(i * w, 0, w, H_);
+    if (i) renderer.shadowMap.autoUpdate = false;
+    renderer.render(scene, sideCam);
+  }
+  renderer.shadowMap.autoUpdate = true;
+  renderer.setScissorTest(false); renderer.setViewport(0, 0, W_, H_);
+}
+function applyScreens() {
+  document.body.classList.toggle('triple', triple);
+  for (const o of $('screenSel').children) o.classList.toggle('on', (o.dataset.triple === '1') === triple);
+  layoutMirrors();
+}
+
 // ---------------------------------------------------------------- HUD
 let gearBtns = [];
 function applyGearbox() {   // rebuild the selector for the chosen transmission
@@ -1300,11 +1449,12 @@ function frame(now) {
     updatePeds(dt);
     if (state === 'run') {
       updateCar(dt);
+      updateEstop();
       const limit = checkRules(dt);
       if (state === 'run') {
         const s = steps[stepIdx];
         if (s && stepDone(s)) {
-          stepIdx++; beep(880, 0.08);
+          stepIdx++; beep(880, 0.08); logEvent('step', TL`Step ${stepIdx} done`);
           if (stepIdx >= steps.length) finish(score >= PASS_SCORE, score >= PASS_SCORE ? 'Well driven!' : 'You finished the route, but with too many mistakes.');
           else showStep();
         }
@@ -1323,13 +1473,16 @@ function frame(now) {
     updateAudio();
   }
   updateCamera(dt);
-  renderer.render(scene, camera);
+  updateRain(dt);
+  sendState(false);
+  renderMain();
   const showMirrors = mirrorsOn && camMode !== 2 && (state === 'run' || state === 'pause');
   document.body.classList.toggle('mirrors', showMirrors);
   if (showMirrors) {
     renderer.shadowMap.autoUpdate = false;   // reuse the shadows from the main view
     for (const m of mirrors) { m.quad.visible = m.frame.visible = m.show; if (m.show) { renderer.setRenderTarget(m.rt); renderer.render(scene, m.cam); } }
     renderer.setRenderTarget(null); renderer.shadowMap.autoUpdate = true;
+    renderer.setViewport(0, 0, window.innerWidth, window.innerHeight);
     renderer.autoClear = false; renderer.render(overlay, overlayCam); renderer.autoClear = true;
   }
 }
@@ -1361,6 +1514,14 @@ for (const b of $('langSel').children) b.onclick = () => {
 };
 applyLanguage();
 $('wheelBtn').onclick = openWheel;
+$('instrBtn').onclick = openInstructor;
+try { triple = localStorage.getItem('driveready.triple') === '1'; } catch (e) { /* storage unavailable */ }
+for (const b of $('screenSel').children) b.onclick = () => {
+  triple = b.dataset.triple === '1';
+  try { localStorage.setItem('driveready.triple', triple ? '1' : '0'); } catch (e) { /* storage unavailable */ }
+  applyScreens();
+};
+applyScreens();
 $('wheelDone').onclick = () => { learning = null; $('wheel').hidden = true; };
 $('wheelReset').onclick = () => { if (pad) { try { localStorage.removeItem(mapKey(pad.id)); } catch (e) { /* storage unavailable */ } padMap = loadMap(pad); renderWheelUI(); } };
 for (const b of $('sideSel').children) b.onclick = () => {
@@ -1392,6 +1553,6 @@ for (const b of $('gearSel').children) b.onclick = () => {
 };
 applyGearbox();
 buildWorld();
-window.__sim = { car, keys, tr, get lang() { return lang; }, get state() { return state; }, get score() { return score; }, get stepIdx() { return stepIdx; }, get traffic() { return traffic; }, get peds() { return peds; }, get crosswalks() { return crosswalks; }, get violations() { return violations; } };
+window.__sim = { onCmd, get env() { return env; }, get evLog() { return evLog; }, car, keys, tr, get lang() { return lang; }, get state() { return state; }, get score() { return score; }, get stepIdx() { return stepIdx; }, get traffic() { return traffic; }, get peds() { return peds; }, get crosswalks() { return crosswalks; }, get violations() { return violations; } };
 requestAnimationFrame(frame);
 })();

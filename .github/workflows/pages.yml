@@ -22,7 +22,7 @@ jobs:
       url: ${{ steps.deploy.outputs.page_url }}
     steps:
       - uses: actions/checkout@v4
-      - run: mkdir site && cp -r index.html main.js lang-ta.js vendor site/
+      - run: mkdir site && cp -r index.html main.js lang-ta.js instructor.html vendor site/
       - uses: actions/configure-pages@v5
         with:
           enablement: true
