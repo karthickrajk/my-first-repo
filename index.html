@@ -53,6 +53,14 @@
   .tog.hold:active { background: var(--acc); color: #111; }
   .mirrors #nav { top: 110px; } .mirrors #toasts { top: 164px; }
   .manualOnly { display: none; }
+  #wheelRows { max-height: 52vh; overflow: auto; }
+  .wrow { display: grid; grid-template-columns: 150px 1fr auto auto; gap: 10px; align-items: center; padding: 5px 0; border-bottom: 1px solid var(--line); font-size: 14px; }
+  .wrow.lit .wname { color: var(--ok); }
+  .wval { color: var(--dim); }
+  .wbar { position: relative; width: 90px; height: 8px; border-radius: 4px; background: rgba(255,255,255,.1); overflow: hidden; }
+  .wbar i { position: absolute; top: 0; bottom: 0; left: 0; width: 0; background: var(--acc); }
+  .wset { padding: 5px 12px; }
+  @media (max-width: 520px) { .wrow { grid-template-columns: 1fr auto auto; } .wbar { display: none; } }
   .manual .manualOnly { display: revert; }
 
   /* touch pads */
@@ -140,7 +148,21 @@
       <span data-tr>Transmission</span>
       <div class="seg" id="gearSel"><button data-manual="0" class="on" data-tr>Automatic</button><button data-manual="1" data-tr>Manual (clutch)</button></div>
     </div>
+    <div class="row">
+      <span data-tr>Steering wheel / pedals</span>
+      <button class="btn" id="wheelBtn" data-tr>Set up</button>
+    </div>
     <div class="keys" id="help"></div>
+  </div>
+</div>
+
+<div id="wheel" class="overlay" hidden>
+  <div class="card panel" style="width:min(560px,100%)">
+    <h2 data-tr>Steering wheel and pedals</h2>
+    <p class="sub" id="wheelDev"></p>
+    <p class="sub" style="margin-top:-8px" data-tr>Click Set, then move that control on your device. Steering, accelerator and brake are needed; the rest are optional. Settings are saved for this device.</p>
+    <div id="wheelRows"></div>
+    <div class="row"><button class="btn primary" id="wheelDone" data-tr>Done</button><button class="btn" id="wheelReset" data-tr>Reset</button></div>
   </div>
 </div>
 

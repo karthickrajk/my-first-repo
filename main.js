@@ -569,7 +569,7 @@ function updatePeds(dt) {
   for (const p of peds) {
     let nx = p.x, nz = p.z, step = false;
     if (p.kind === 'cross') {
-      if (!p.walking && keys.horn && state === 'run' && Math.hypot(p.x - car.x, p.z - car.z) < 30) p.wait = Math.max(p.wait, 2.5);   // a warning horn makes people wait
+      if (!p.walking && inp.horn && state === 'run' && Math.hypot(p.x - car.x, p.z - car.z) < 30) p.wait = Math.max(p.wait, 2.5);   // a warning horn makes people wait
       if (!p.walking) { p.wait -= dt; if (p.wait <= 0 && crossingClear(p.cw, vehicles)) p.walking = true; }
       if (p.walking) {
         const x = p.cw.ax === 'x', nu = p.u + p.dir * p.speed * dt;
@@ -867,7 +867,7 @@ function setGear(g) {
 const shift = dir => { const l = gearList(); setGear(l[clamp(l.indexOf(car.gear) + dir, 0, l.length - 1)]); };
 const toggleHand = () => { car.hand = !car.hand; beep(car.hand ? 300 : 420, 0.05); };
 function toggleEngine() {
-  if (!car.engine && manual && car.gear !== 'N' && !keys.clutch) return toast('Select neutral or hold the clutch to start', 'info');
+  if (!car.engine && manual && car.gear !== 'N' && car.clutch < 0.7 && !inp.clutch) return toast('Select neutral or hold the clutch to start', 'info');
   if (!car.engine && !manual && car.gear !== 'P' && car.gear !== 'N') return toast('Select P or N to start the engine', 'info');
   car.engine = !car.engine;
 }
@@ -926,49 +926,194 @@ function beep(freq, dur) {
 }
 function updateAudio() {
   if (!actx) return;
-  hornGain.gain.setTargetAtTime(keys.horn && state === 'run' && !muted ? 0.05 : 0, actx.currentTime, 0.01);
+  hornGain.gain.setTargetAtTime(inp.horn && state === 'run' && !muted ? 0.05 : 0, actx.currentTime, 0.01);
   const on = car.engine && state === 'run' && !muted;
-  engGain.gain.setTargetAtTime(on ? 0.035 + (keys.gas ? 0.025 : 0) : 0, actx.currentTime, 0.08);
-  engOsc.frequency.setTargetAtTime(manual ? 30 + car.rpm / 38 : 48 + Math.abs(car.v) * 5.5 + (keys.gas ? 18 : 0), actx.currentTime, 0.1);
+  engGain.gain.setTargetAtTime(on ? 0.035 + inp.gas * 0.025 : 0, actx.currentTime, 0.08);
+  engOsc.frequency.setTargetAtTime(manual ? 30 + car.rpm / 38 : 48 + Math.abs(car.v) * 5.5 + inp.gas * 18, actx.currentTime, 0.1);
 }
+
+// ---------------------------------------------------------------- steering wheel, pedals and game controllers
+// Uses the browser Gamepad API. Each control is learned once on the setup screen ("move it and hold"),
+// stored per device, and read every frame as an analog value next to the keyboard.
+const inp = { steer: 0, gas: 0, brake: 0, clutch: 0, clutchAxis: false, horn: false, wheel: false };
+const AXES = ['steer', 'gas', 'brake', 'clutch'];
+const BTNS = ['gearUp', 'gearDown', 'gearR', 'gear1', 'gear2', 'gear3', 'gear4', 'gear5', 'sigL', 'sigR', 'horn', 'hand', 'engine', 'belt', 'cam', 'pause'];
+const CTRL_NAMES = {
+  steer: 'Steering', gas: 'Accelerator', brake: 'Brake', clutch: 'Clutch', gearUp: 'Gear up', gearDown: 'Gear down',
+  gearR: 'Reverse (H-shifter)', gear1: '1st (H-shifter)', gear2: '2nd (H-shifter)', gear3: '3rd (H-shifter)', gear4: '4th (H-shifter)', gear5: '5th (H-shifter)',
+  sigL: 'Left indicator', sigR: 'Right indicator', horn: 'Horn', hand: 'Parking brake', engine: 'Engine', belt: 'Seatbelt', cam: 'Camera', pause: 'Pause',
+};
+// Xbox / PlayStation style pads report the "standard" layout, so they work without setup.
+const STANDARD_MAP = { axes: { steer: { axis: 0, rest: 0, full: -1 } }, trig: { gas: 7, brake: 6 },
+  btn: { gearUp: 5, gearDown: 4, sigL: 14, sigR: 15, horn: 3, hand: 1, engine: 9, belt: 2, cam: 12, pause: 8 } };
+let pad = null, padMap = null, prevBtn = [], learning = null;
+const mapKey = id => 'driveready.wheel.' + id;
+function loadMap(gp) {
+  try { const m = JSON.parse(localStorage.getItem(mapKey(gp.id)) || 'null'); if (m) return m; } catch (e) { /* storage unavailable */ }
+  return gp.mapping === 'standard' ? JSON.parse(JSON.stringify(STANDARD_MAP)) : { axes: {}, trig: {}, btn: {} };
+}
+function saveMap() { try { localStorage.setItem(mapKey(pad.id), JSON.stringify(padMap)); } catch (e) { /* storage unavailable */ } }
+function findPad() {
+  const list = navigator.getGamepads ? [...navigator.getGamepads()].filter(Boolean) : [];
+  // prefer a device with many axes (a wheel) over a plain pad
+  return list.sort((a, b) => b.axes.length - a.axes.length)[0] || null;
+}
+window.addEventListener('gamepadconnected', e => { toast(TL`Connected: ${e.gamepad.id.slice(0, 40)}`, 'good'); renderWheelUI(); });
+window.addEventListener('gamepaddisconnected', () => { pad = null; renderWheelUI(); });
+
+function axisValue(gp, a) {   // 0..1 for pedals, -1..1 for steering (+ = left)
+  const v = gp.axes[a.axis]; if (v === undefined) return 0;
+  const f = (v - a.rest) / ((a.full - a.rest) || 1);
+  return a.center ? clamp(f, -1, 1) : clamp(f, 0, 1);
+}
+const btnDown = (gp, i) => i !== undefined && gp.buttons[i] && (gp.buttons[i].pressed || gp.buttons[i].value > 0.5);
+const pedal = v => v < 0.04 ? 0 : v;   // small dead zone so a resting pedal reads 0
+
+function pollInput() {
+  const gp = findPad();
+  if (gp && (!pad || pad.id !== gp.id)) { padMap = loadMap(gp); prevBtn = []; }
+  pad = gp;
+  let steer = 0, gas = 0, brake = 0, clutch = 0, clutchAxis = false, horn = false;
+  if (gp && padMap && !learning) {
+    const ax = padMap.axes, tg = padMap.trig || {}, bt = padMap.btn;
+    if (ax.steer) { const v = axisValue(gp, ax.steer); steer = Math.abs(v) < 0.02 ? 0 : v; }
+    if (ax.gas) gas = pedal(axisValue(gp, ax.gas)); else if (tg.gas !== undefined && gp.buttons[tg.gas]) gas = pedal(gp.buttons[tg.gas].value);
+    if (ax.brake) brake = pedal(axisValue(gp, ax.brake)); else if (tg.brake !== undefined && gp.buttons[tg.brake]) brake = pedal(gp.buttons[tg.brake].value);
+    if (ax.clutch) { clutch = pedal(axisValue(gp, ax.clutch)); clutchAxis = true; }
+    horn = btnDown(gp, bt.horn);
+    const pressed = k => btnDown(gp, bt[k]) && !prevBtn[bt[k]];
+    if (state === 'run') {
+      if (pressed('gearUp')) shift(1);
+      if (pressed('gearDown')) shift(-1);
+      if (pressed('sigL')) toggleSignal(1);
+      if (pressed('sigR')) toggleSignal(-1);
+      if (pressed('hand')) toggleHand();
+      if (pressed('engine')) toggleEngine();
+      if (pressed('belt')) toggleBelt();
+      if (pressed('cam')) camMode = (camMode + 1) % 3;
+      // H-shifter: a gear is selected while its slot is held; back to neutral when released
+      const hGear = ['gearR', 'gear1', 'gear2', 'gear3', 'gear4', 'gear5'].find(k => btnDown(gp, bt[k]));
+      const hMapped = ['gearR', 'gear1', 'gear2', 'gear3', 'gear4', 'gear5'].some(k => bt[k] !== undefined);
+      if (hGear) { const g = hGear === 'gearR' ? 'R' : manual ? hGear.slice(4) : 'D'; if (car.gear !== g) setGear(g); }
+      else if (hMapped && manual && car.gear !== 'N' && MG[car.gear]) setGear('N');
+    }
+    if (pressed('pause') && (state === 'run' || state === 'pause')) togglePause();
+    prevBtn = gp.buttons.map(b => b.pressed || b.value > 0.5);
+  }
+  // keyboard and on-screen pads still work alongside the device
+  inp.steer = steer || ((keys.left ? 1 : 0) - (keys.right ? 1 : 0));
+  inp.wheel = !!steer || (!!(gp && padMap && padMap.axes.steer) && !keys.left && !keys.right);
+  inp.gas = Math.max(gas, keys.gas ? 1 : 0);
+  inp.brake = Math.max(brake, keys.brake ? 1 : 0);
+  inp.clutchAxis = clutchAxis && !keys.clutch;
+  inp.clutch = Math.max(clutch, keys.clutch ? 1 : 0);
+  inp.horn = horn || keys.horn;
+  if (learning) stepLearning(gp);
+  if (!$('wheel').hidden) updateWheelLive(gp);
+}
+
+// ---- learning a control: snapshot everything, then pick whatever moves the most
+function startLearning(ctrl) {
+  const gp = findPad(); if (!gp) return;
+  learning = { ctrl, base: [...gp.axes], baseBtn: gp.buttons.map(b => b.pressed || b.value > 0.5), axis: -1, peak: 0, t: 0, last: performance.now() };
+  renderWheelUI();
+}
+function stepLearning(gp) {
+  const L = learning, now = performance.now(), dt = (now - L.last) / 1000; L.last = now;
+  if (!gp) return;
+  if (BTNS.includes(L.ctrl)) {
+    const i = gp.buttons.findIndex((b, k) => (b.pressed || b.value > 0.5) && !L.baseBtn[k]);
+    if (i >= 0) { padMap.btn[L.ctrl] = i; finishLearning(); }
+    return;
+  }
+  let best = -1, dev = 0;
+  gp.axes.forEach((v, k) => { const d = Math.abs(v - L.base[k]); if (d > dev) { dev = d; best = k; } });
+  if (L.axis < 0) {
+    if (dev > (L.ctrl === 'steer' ? 0.12 : 0.35)) { L.axis = best; L.peak = gp.axes[best]; }
+    else if (L.ctrl !== 'steer') {   // pedals on some pads are analog buttons rather than axes
+      const i = gp.buttons.findIndex((b, k) => b.value > 0.5 && !L.baseBtn[k]);
+      if (i >= 0) { delete padMap.axes[L.ctrl]; padMap.trig = padMap.trig || {}; padMap.trig[L.ctrl] = i; finishLearning(); }
+    }
+    return;
+  }
+  const v = gp.axes[L.axis];
+  if (Math.abs(v - L.base[L.axis]) > Math.abs(L.peak - L.base[L.axis]) + 0.01) { L.peak = v; L.t = 0; } else L.t += dt;
+  if (L.t > 0.8) {   // held steady at the end of travel
+    const a = { axis: L.axis, rest: L.base[L.axis], full: L.peak };
+    if (L.ctrl === 'steer') a.center = true;
+    if (padMap.trig) delete padMap.trig[L.ctrl];
+    padMap.axes[L.ctrl] = a; finishLearning();
+  }
+}
+function finishLearning() { learning = null; saveMap(); beep(880, 0.08); renderWheelUI(); }
+
+// ---- setup screen
+function renderWheelUI() {
+  if ($('wheel').hidden) return;
+  const gp = findPad();
+  $('wheelDev').textContent = gp ? gp.id : tr('No wheel or controller found. Plug it in and press any button on it.');
+  $('wheelRows').innerHTML = '';
+  if (!gp || !padMap) return;
+  for (const c of [...AXES, ...BTNS]) {
+    const row = document.createElement('div'); row.className = 'wrow';
+    const isAxis = AXES.includes(c), m = isAxis ? (padMap.axes[c] || (padMap.trig && padMap.trig[c] !== undefined && { trig: padMap.trig[c] })) : padMap.btn[c];
+    const label = m === undefined || m === false ? tr('not set') : isAxis ? (m.trig !== undefined ? TL`button ${m.trig}` : TL`axis ${m.axis}`) : TL`button ${m}`;
+    row.innerHTML = `<span class="wname"></span><span class="wval"></span>${isAxis ? '<span class="wbar"><i></i></span>' : ''}<button class="btn wset"></button>`;
+    row.querySelector('.wname').textContent = tr(CTRL_NAMES[c]);
+    row.querySelector('.wval').textContent = learning && learning.ctrl === c ? tr(c === 'steer' ? 'Turn the wheel fully LEFT and hold…' : isAxis ? 'Press it all the way and hold…' : 'Press the button…') : label;
+    const b = row.querySelector('.wset'); b.textContent = tr('Set'); b.onclick = () => startLearning(c);
+    row.dataset.ctrl = c; $('wheelRows').appendChild(row);
+  }
+}
+function updateWheelLive(gp) {
+  if (!gp || learning) return;
+  for (const row of $('wheelRows').children) {
+    const c = row.dataset.ctrl, bar = row.querySelector('.wbar i'); if (!bar) { row.classList.toggle('lit', btnDown(gp, padMap.btn[c])); continue; }
+    const v = inp[c] || 0;
+    bar.style.left = c === 'steer' ? (50 - Math.max(0, v) * 50) + '%' : '0';
+    bar.style.width = (c === 'steer' ? Math.abs(v) * 50 : v * 100) + '%';
+  }
+}
+function openWheel() { $('wheel').hidden = false; renderWheelUI(); }
 
 // ---------------------------------------------------------------- player update
 function updateCar(dt) {
   const px = car.x, pz = car.z, pth = car.th;
-  const st = (keys.left ? 1 : 0) - (keys.right ? 1 : 0), vabs = Math.abs(car.v);
+  const st = inp.steer, vabs = Math.abs(car.v), gas = inp.gas > 0.02;
   const maxSt = Math.min(0.6, Math.atan(WB * 7 / Math.max(vabs * vabs, 1)));   // limits cornering grip at speed
-  const rate = (st ? 1.5 : 3) * dt;
+  const rate = (inp.wheel ? 6 : st ? 1.5 : 3) * dt;   // a real wheel is followed almost directly
   car.steer = clamp(car.steer + clamp(st * maxSt - car.steer, -rate, rate), -maxSt, maxSt);
 
   let acc = 0;
   const hint = text => { if (clock - (lastPen._hint ?? -9) > 4) { lastPen._hint = clock; toast(text, 'info'); } };
-  if (keys.gas && car.hand && Math.abs(car.v) < 1) hint('Release the parking brake (Space)');
+  if (gas && car.hand && Math.abs(car.v) < 1) hint('Release the parking brake (Space)');
   if (manual) {
-    car.clutch = keys.clutch ? Math.min(1, car.clutch + dt * 8) : Math.max(0, car.clutch - dt * 1.6);   // pedal comes up gradually
+    if (inp.clutchAxis) car.clutch = inp.clutch;   // real pedal: exactly where the foot is
+    else car.clutch = inp.clutch ? Math.min(1, car.clutch + dt * 8) : Math.max(0, car.clutch - dt * 1.6);   // key: pedal comes up gradually
     const g = MG[car.gear], engage = 1 - car.clutch;
-    let rpm = car.engine ? 800 + (keys.gas ? 2600 : 0) : 0;
+    let rpm = car.engine ? 800 + inp.gas * 2600 : 0;
     if (g && car.engine) {
       const dirn = car.gear === 'R' ? -1 : 1, vg = car.v * dirn;   // speed in the direction the gear drives
-      if (car.clutch < 0.15 && vg < (keys.gas ? g.gasMin : g.idleMin)) {
+      if (car.clutch < 0.15 && vg < (inp.gas > 0.25 ? g.gasMin : g.idleMin)) {
         car.engine = false; rpm = 0; beep(120, 0.3);
         toast(Math.abs(car.v) < 1 ? 'Engine stalled — use the clutch when stopping, and gas when moving off' : TL`Engine stalled — too slow for gear ${car.gear}`, 'info');
         if (steps.length) penalize('Stalled the engine', 5, 2);
       } else {
-        if (keys.gas) acc = dirn * g.acc * (1 - vg / g.max) * engage * clamp(vg / (0.3 * g.max), g.low, 1);
+        if (gas) acc = dirn * g.acc * inp.gas * (1 - vg / g.max) * engage * clamp(vg / (0.3 * g.max), g.low, 1);
         else if (g.creep && vg < g.creep) acc = dirn * engage;                                  // idles along in 1st / reverse
         else acc = -dirn * engage * g.brake * (1 + 3 * Math.max(0, vg / g.max - 1));           // engine braking
         if (car.clutch < 0.5) rpm = 800 + Math.max(0, vg) / g.max * 5700;
       }
-    } else if (keys.gas && !car.engine) hint('Engine is off — press I');
+    } else if (gas && !car.engine) hint('Engine is off — press I');
     car.rpm += (rpm - car.rpm) * Math.min(1, dt * 8);
-  } else if (car.engine && keys.gas) {
-    if (car.gear === 'D') acc = 3.6 * (1 - car.v / 45);
-    else if (car.gear === 'R') acc = -2.5 * (1 + car.v / 9);
+  } else if (car.engine && gas) {
+    if (car.gear === 'D') acc = 3.6 * inp.gas * (1 - car.v / 45);
+    else if (car.gear === 'R') acc = -2.5 * inp.gas * (1 + car.v / 9);
     else if (clock - (lastPen._hint ?? -9) > 4) { lastPen._hint = clock; toast('Select D or R to move', 'info'); }
-  } else if (!car.engine && keys.gas && clock - (lastPen._hint ?? -9) > 4) { lastPen._hint = clock; toast('Engine is off — press I', 'info'); }
+  } else if (!car.engine && gas && clock - (lastPen._hint ?? -9) > 4) { lastPen._hint = clock; toast('Engine is off — press I', 'info'); }
   const slope = slopeAhead();
   car.v += (acc - 9.81 * slope / Math.hypot(1, slope)) * dt;
-  const dec = (0.35 + 0.0005 * vabs * vabs + (keys.brake ? 9 : 0) + (car.hand ? 12 : 0) + (car.gear === 'P' ? 20 : 0)) * dt;
+  const dec = (0.35 + 0.0005 * vabs * vabs + inp.brake * 9 + (car.hand ? 12 : 0) + (car.gear === 'P' ? 20 : 0)) * dt;
   car.v = Math.abs(car.v) <= dec ? 0 : car.v - Math.sign(car.v) * dec;
 
   car.x += Math.sin(car.th) * car.v * dt;
@@ -1146,6 +1291,7 @@ let last = performance.now(), lastBlink = false;
 function frame(now) {
   requestAnimationFrame(frame);
   const dt = Math.min(0.05, (now - last) / 1000); last = now;
+  pollInput();
   if (state !== 'pause' && state !== 'end') {
     clock += dt;
     const blinkOn = (clock * 2.6) % 1 < 0.5;
@@ -1173,7 +1319,7 @@ function frame(now) {
     const u = playerMesh.userData;
     u.fw.forEach(p => { p.rotation.y = car.steer; });
     u.wheel.rotation.z = -car.steer * 4;
-    setCarLamps(playerMesh, keys.brake || car.gear === 'P' || car.hand, car.signal, blinkOn);
+    setCarLamps(playerMesh, inp.brake > 0.05 || car.gear === 'P' || car.hand, car.signal, blinkOn);
     updateAudio();
   }
   updateCamera(dt);
@@ -1214,6 +1360,9 @@ for (const b of $('langSel').children) b.onclick = () => {
   applyLanguage();
 };
 applyLanguage();
+$('wheelBtn').onclick = openWheel;
+$('wheelDone').onclick = () => { learning = null; $('wheel').hidden = true; };
+$('wheelReset').onclick = () => { if (pad) { try { localStorage.removeItem(mapKey(pad.id)); } catch (e) { /* storage unavailable */ } padMap = loadMap(pad); renderWheelUI(); } };
 for (const b of $('sideSel').children) b.onclick = () => {
   side = +b.dataset.side;
   for (const o of $('sideSel').children) o.classList.toggle('on', o === b);

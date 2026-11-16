@@ -14,6 +14,26 @@ in `vendor/three.min.js`.)
 Every push to `master` publishes the game for free on GitHub Pages:
 https://karthickrajk.github.io/my-first-repo/
 
+## Steering wheel, pedals and controllers
+
+USB steering wheels with pedals (Logitech G29/G920/G923, Thrustmaster, Fanatec
+and others) and game controllers work through the browser's Gamepad API.
+
+1. Plug the device in and open the game in **Chrome or Edge**.
+2. Press any button on the device so the browser notices it.
+3. On the menu, click **Steering wheel / pedals → Set up**.
+4. For each control click **Set**, then move it: turn the wheel left as far
+   as you want full lock, press each pedal all the way, or press the button.
+   Steering, accelerator and brake are required; clutch, paddles, H-shifter
+   gears, indicators, horn, parking brake, engine, seatbelt, camera and pause
+   are optional. The mapping is saved for that device.
+
+Pedals are analog, so half throttle and half braking work. With a clutch pedal
+the clutch is exactly where your foot is, and an H-shifter holds the gear while
+the lever is in the slot (neutral when it is out). Xbox and PlayStation
+controllers work without setup: left stick steers, the triggers are gas and
+brake, and the shoulder buttons change gear. The keyboard keeps working too.
+
 ## Language
 
 The menu switches between English and Tamil (தமிழ்). All menus, instructor
