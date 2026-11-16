@@ -109,7 +109,14 @@ function slopeAhead() {   // rise per metre in the direction the car points
   return (groundH(car.x + fx, car.z + fz) - groundH(car.x - fx, car.z - fz)) / 1.2;
 }
 const gearList = () => manual ? MANUAL_GEARS : AUTO_GEARS;
-const tx = (auto, man) => manual ? man : auto;   // lesson text that differs by gearbox
+let lang = 'en';
+const tr = s => (lang === 'ta' && window.LANG_TA && window.LANG_TA[s]) || s;   // translate an English text
+function TL(strings, ...vals) {   // translated template: TL`Too fast for gear ${g}` looks up 'Too fast for gear {0}'
+  let key = strings[0];
+  for (let i = 0; i < vals.length; i++) key += `{${i}}` + strings[i + 1];
+  return tr(key).replace(/\{(\d)\}/g, (_, n) => vals[n]);
+}
+const tx = (auto, man) => tr(manual ? man : auto);   // lesson text that differs by gearbox
 const inDriveGear = () => manual ? car.gear === '1' && !car.hand : car.gear === 'D';
 const isSecured = () => manual ? car.gear === 'N' && car.hand : car.gear === 'P';
 
@@ -651,12 +658,12 @@ const LESSONS = [
       const box = addBox({ x: 340, z: 52, th: Math.PI / 2, hw: 2.3, hl: 4.2 });
       const gates = [[X + 4, -25], [X - 4, -10], [X + 4, 5], [X - 4, 20]];
       return { start: { x: X, z: -52, th: 0 }, steps: [
-        { type: 'belt', text: 'Welcome! Before anything else, fasten your seatbelt — press B.' },
+        { type: 'belt', text: tr('Welcome! Before anything else, fasten your seatbelt — press B.') },
         { type: 'engine', text: tx('Start the engine — press I.', 'Check the gear is in neutral (N), then start the engine — press I.') },
         { type: 'drive', text: tx('Select Drive: press X to move the selector P → R → N → D.', 'Hold the clutch (Shift) and select 1st gear (X). Then release the parking brake (Space).') },
-        ...gates.map(([x, z], k) => ({ type: 'cp', x, z, r: 2.6, text: k ? 'Keep weaving — pass the next cone on the other side. Gentle steering, low speed.' : tx('Accelerate gently (W) and slalom through the cones. Drive through each yellow marker.', 'Press the gas (W) and let the clutch (Shift) come up to move off. Slalom through the cones, driving through each yellow marker.') })),
-        { type: 'cp', x: X, z: 40, r: 3.5, text: 'Straighten up and continue to the marker.' },
-        { type: 'cp', x: 305, z: 52, r: 3.5, text: 'Turn left towards the stopping box. Remember the 20 km/h limit.' },
+        ...gates.map(([x, z], k) => ({ type: 'cp', x, z, r: 2.6, text: k ? tr('Keep weaving — pass the next cone on the other side. Gentle steering, low speed.') : tx('Accelerate gently (W) and slalom through the cones. Drive through each yellow marker.', 'Press the gas (W) and let the clutch (Shift) come up to move off. Slalom through the cones, driving through each yellow marker.') })),
+        { type: 'cp', x: X, z: 40, r: 3.5, text: tr('Straighten up and continue to the marker.') },
+        { type: 'cp', x: 305, z: 52, r: 3.5, text: tr('Turn left towards the stopping box. Remember the 20 km/h limit.') },
         { type: 'stop', box, text: tx('Stop completely inside the yellow box (S to brake).', 'Stop completely inside the yellow box: clutch down (Shift) before you stop, then brake (S).') },
         { type: 'secure', text: tx('Good stop! Now select Park — press Z until P is highlighted.', 'Good stop! Apply the parking brake (Space) and select neutral (Z, with the clutch down).') },
       ] };
@@ -674,8 +681,8 @@ const LESSONS = [
       const box = addBox({ x: bx(3), z: bz, th: 0, hw: 1.5, hl: 3.1 });
       return { start: { x: 275, z: -30, th: 0 }, steps: [
         { type: 'ready', text: READY_TXT() },
-        { type: 'cp', x: 310, z: 30, r: 5, text: 'Drive to the row of parked cars. Use the top camera (C) to see the bay.' },
-        { type: 'stop', box, park: true, text: `Park fully inside the free bay, stop, then ${SECURE_TXT()}. For reverse: stop, select R (Z), steer and back in slowly.` },
+        { type: 'cp', x: 310, z: 30, r: 5, text: tr('Drive to the row of parked cars. Use the top camera (C) to see the bay.') },
+        { type: 'stop', box, park: true, text: TL`Park fully inside the free bay, stop, then ${SECURE_TXT()}. For reverse: stop, select R (Z), steer and back in slowly.` },
       ] };
     } },
   { id: 'eight', title: '3 · "8" track', desc: 'Drive a figure of eight between the cones — one loop each way — without touching any.', build() {
@@ -690,13 +697,13 @@ const LESSONS = [
       coneTrack(pts, lanes);
       const box = addBox({ x: cx + len + 9, z: cz, th: Math.PI / 2, hw: 2.3, hl: 4.2 });
       const cp = (x, z, text) => ({ type: 'cp', x, z, r: 2.3, text });
-      const b = 'First loop: steer right and keep a slow, steady speed all the way round.', a = 'Second loop: cross the centre and steer left around the other circle.';
+      const b = tr('First loop: steer right and keep a slow, steady speed all the way round.'), a = tr('Second loop: cross the centre and steer left around the other circle.');
       return { start: { x: cx - len - 8, z: cz, th: Math.PI / 2 }, steps: [
         { type: 'ready', text: READY_TXT() },
-        cp(cx + R, cz + R, 'Drive in along the lane. At the centre, start the first loop to the right. Do not touch the cones.'),
+        cp(cx + R, cz + R, tr('Drive in along the lane. At the centre, start the first loop to the right. Do not touch the cones.')),
         cp(cx, cz + 2 * R, b), cp(cx - R, cz + R, b),
         cp(cx + R, cz - R, a), cp(cx, cz - 2 * R, a), cp(cx - R, cz - R, a),
-        { type: 'stop', box, park: true, text: `Leave through the centre, stop in the yellow box, then ${SECURE_TXT()}.` },
+        { type: 'stop', box, park: true, text: TL`Leave through the centre, stop in the yellow box, then ${SECURE_TXT()}.` },
       ] };
     } },
   { id: 'h', title: '4 · "H" track', desc: 'Drive forward through the H — up one leg, across the bar, up the other — then reverse all the way back.', build() {
@@ -710,11 +717,11 @@ const LESSONS = [
       const far = addBox({ x: hx + D, z: hz + 12, th: 0, hw: 2.4, hl: 3.6 }), home = addBox({ x: hx - D, z: hz - 12, th: 0, hw: 2.4, hl: 3.6 });
       return { start: { x: hx - D, z: hz - 12, th: 0 }, steps: [
         { type: 'ready', text: READY_TXT() },
-        { type: 'cp', x: hx, z: hz, r: 2.6, text: 'Forward: drive up the leg and turn left into the crossbar. Go slowly and do not touch the cones.' },
-        { type: 'stop', box: far, text: 'Turn right into the far leg and stop inside the yellow box at the end.' },
+        { type: 'cp', x: hx, z: hz, r: 2.6, text: tr('Forward: drive up the leg and turn left into the crossbar. Go slowly and do not touch the cones.') },
+        { type: 'stop', box: far, text: tr('Turn right into the far leg and stop inside the yellow box at the end.') },
         { type: 'reverse', text: tx('Now select reverse — press Z until R is highlighted.', 'Now select reverse — hold the clutch (Shift) and press Z until R is highlighted.') },
-        { type: 'cp', x: hx, z: hz, r: 2.6, text: 'Reverse back the way you came: down the leg and round into the crossbar. The top camera (C) helps.' },
-        { type: 'stop', box: home, park: true, text: `Keep reversing round into the first leg, stop in the starting box, then ${SECURE_TXT()}.` },
+        { type: 'cp', x: hx, z: hz, r: 2.6, text: tr('Reverse back the way you came: down the leg and round into the crossbar. The top camera (C) helps.') },
+        { type: 'stop', box: home, park: true, text: TL`Keep reversing round into the first leg, stop in the starting box, then ${SECURE_TXT()}.` },
       ] };
     } },
   { id: 'hill', title: '5 · Hill start', desc: 'Stop on a slope, then pull away uphill without rolling back. Come down the far side under control.', build() {
@@ -735,29 +742,29 @@ const LESSONS = [
       const end = addBox({ x: 364, z: z0, th: Math.PI / 2, hw: 2.3, hl: 4.2 });
       return { start: { x: 268, z: z0, th: Math.PI / 2 }, steps: [
         { type: 'ready', text: READY_TXT() },
-        { type: 'stop', box: hold, park: true, text: `Drive onto the slope and stop inside the yellow box. Hold the car there: ${SECURE_TXT()}.` },
+        { type: 'stop', box: hold, park: true, text: TL`Drive onto the slope and stop inside the yellow box. Hold the car there: ${SECURE_TXT()}.` },
         { type: 'cp', x: x0 + up + top / 2, z: z0, r: 3, hill: true, text: tx(
           'Hill start: hold the brake (S), select D, then move to the gas (W) and pull away without rolling back.',
           'Hill start: clutch down (Shift), select 1st, press the gas (W), bring the clutch up — and release the parking brake (Space) as the car starts to pull. Do not roll back.') },
-        { type: 'stop', box: end, park: true, text: `Go down the far side under control — brake to stay below 20 km/h. Stop in the box, then ${SECURE_TXT()}.` },
+        { type: 'stop', box: end, park: true, text: TL`Go down the far side under control — brake to stay below 20 km/h. Stop in the box, then ${SECURE_TXT()}.` },
       ] };
     } },
   { id: 'city', title: '6 · City exam', desc: 'Follow the route through traffic: obey lights and signs, give way to pedestrians, signal every turn.', build() {
       const route = [[-2, 0], [-1, 0], [0, 0], [0, 1], [1, 1], [1, 0], [1, -1], [0, -1], [-1, -1], [-1, 0], [-2, 0]];
-      const st = [{ type: 'ready', text: READY_TXT() + ' Watch for speed-limit signs, STOP signs and zebra crossings.' }];
+      const st = [{ type: 'ready', text: READY_TXT() + tr(' Watch for speed-limit signs, STOP signs and zebra crossings.') }];
       for (let k = 1; k < route.length - 1; k++) {
         const a = route[k], b = route[k + 1], p = route[k - 1];
         const d = [b[0] - a[0], b[1] - a[1]], d0 = [a[0] - p[0], a[1] - p[1]], l = laneVec(d);
         const cross = d0[0] * d[1] - d0[1] * d[0];
-        const text = cross < 0 ? 'At the next junction turn LEFT. Signal first (Q) and give way to oncoming traffic.'
+        const text = tr(cross < 0 ? 'At the next junction turn LEFT. Signal first (Q) and give way to oncoming traffic.'
           : cross > 0 ? 'At the next junction turn RIGHT. Signal first (E) and slow down for the corner.'
-          : 'Go straight on at the junction. Stop if the light is red.';
-        const extra = (STOP_NODES.has(a[0] + ',' + a[1]) ? ' It has a STOP sign: come to a complete stop first.' : '')
-          + (ZONE30.has(segKey({ i: p[0], j: p[1] }, { i: a[0], j: a[1] })) ? ' 30 zone ahead — give way at the zebra crossing.' : '');
+          : 'Go straight on at the junction. Stop if the light is red.');
+        const extra = (STOP_NODES.has(a[0] + ',' + a[1]) ? tr(' It has a STOP sign: come to a complete stop first.') : '')
+          + (ZONE30.has(segKey({ i: p[0], j: p[1] }, { i: a[0], j: a[1] })) ? tr(' 30 zone ahead — give way at the zebra crossing.') : '');
         const mx = (a[0] + b[0]) / 2 * S + l[0] * LANE, mz = (a[1] + b[1]) / 2 * S + l[1] * LANE;
         if (k === route.length - 2) {
           const box = addBox({ x: mx + l[0] * 0.6, z: mz + l[1] * 0.6, th: Math.atan2(d[0], d[1]), hw: 2.2, hl: 5 });
-          st.push({ type: 'stop', box, park: true, text: text + extra + ` Then pull over in the yellow box, stop and ${SECURE_TXT()}.` });
+          st.push({ type: 'stop', box, park: true, text: text + extra + TL` Then pull over in the yellow box, stop and ${SECURE_TXT()}.` });
         } else st.push({ type: 'cp', x: mx, z: mz, r: 4.5, text: text + extra });
       }
       return { start: cityStart(), steps: st };
@@ -788,8 +795,8 @@ function startLesson(l) {
 }
 function showStep() {
   const s = steps[stepIdx];
-  $('stepNum').textContent = steps.length ? `Step ${Math.min(stepIdx + 1, steps.length)} / ${steps.length}` : 'Free drive';
-  $('stepText').textContent = s ? s.text : 'Drive wherever you like. Obey the lights, keep to your side of the road and signal your turns.';
+  $('stepNum').textContent = steps.length ? TL`Step ${Math.min(stepIdx + 1, steps.length)} / ${steps.length}` : tr('Free drive');
+  $('stepText').textContent = s ? s.text : tr('Drive wherever you like. Obey the lights, keep to your side of the road and signal your turns.');
   ring.visible = !!s && s.type === 'cp';
   if (ring.visible) { ring.position.set(s.x, groundH(s.x, s.z), s.z); ring.children[0].scale.set(s.r, 1, s.r); }
   activeBox = s && s.type === 'stop' ? s.box : null;
@@ -809,11 +816,11 @@ function stepDone(s) {
 function finish(passed, why) {
   state = 'end';
   $('hud').hidden = true; $('result').hidden = false;
-  $('resTitle').textContent = passed ? 'Lesson passed' : 'Lesson failed';
+  $('resTitle').textContent = tr(passed ? 'Lesson passed' : 'Lesson failed');
   $('resTitle').className = passed ? 'pass' : 'fail';
-  $('resText').textContent = `${why} Final score: ${Math.max(0, score)} / 100 (pass mark ${PASS_SCORE}).`;
+  $('resText').textContent = TL`${tr(why)} Final score: ${Math.max(0, score)} / 100 (pass mark ${PASS_SCORE}).`;
   const names = Object.keys(violations);
-  $('resList').innerHTML = names.length ? '' : '<li><span>No mistakes — clean drive!</span></li>';
+  $('resList').innerHTML = names.length ? '' : `<li><span>${tr('No mistakes — clean drive!')}</span></li>`;
   for (const n of names) {
     const li = document.createElement('li');
     li.innerHTML = `<span></span><b>× ${violations[n].n} &nbsp; −${violations[n].pts}</b>`;
@@ -826,17 +833,18 @@ function toMenu() {
   $('menu').hidden = false; ring.visible = false;
 }
 function toast(text, cls) {
-  const t = document.createElement('div'); t.className = 'toast ' + (cls || ''); t.textContent = text;
-  $('toasts').appendChild(t);
+  const el = document.createElement('div'); el.className = 'toast ' + (cls || ''); el.textContent = tr(text);
+  $('toasts').appendChild(el);
   while ($('toasts').children.length > 4) $('toasts').firstChild.remove();
-  setTimeout(() => t.remove(), 3500);
+  setTimeout(() => el.remove(), 3500);
 }
 function penalize(name, pts, cooldown) {
   if (clock - (lastPen[name] ?? -99) < cooldown) return;
   lastPen[name] = clock;
   score -= pts;
-  const v = violations[name] || (violations[name] = { n: 0, pts: 0 }); v.n++; v.pts += pts;
-  toast(`${name}  −${pts}`);
+  const label = tr(name);   // shown and listed in the player's language
+  const v = violations[label] || (violations[label] = { n: 0, pts: 0 }); v.n++; v.pts += pts;
+  toast(`${label}  −${pts}`);
   beep(180, 0.18);
   if (steps.length && score <= FAIL_SCORE) finish(false, 'Too many serious mistakes.');
 }
@@ -848,7 +856,7 @@ function setGear(g) {
     if (car.engine && car.clutch < 0.7) return toast('Press the clutch (Shift) to change gear', 'info');
     if (MG[g] && g !== 'R') {
       if (car.v < -1) return toast('Stop before selecting a forward gear', 'info');
-      if (car.v > MG[g].max * 1.15) return toast(`Too fast for gear ${g}`, 'info');
+      if (car.v > MG[g].max * 1.15) return toast(TL`Too fast for gear ${g}`, 'info');
     }
   }
   if (g === 'P' && Math.abs(car.v) > 0.5) return toast('Stop before selecting P', 'info');
@@ -943,7 +951,7 @@ function updateCar(dt) {
       const dirn = car.gear === 'R' ? -1 : 1, vg = car.v * dirn;   // speed in the direction the gear drives
       if (car.clutch < 0.15 && vg < (keys.gas ? g.gasMin : g.idleMin)) {
         car.engine = false; rpm = 0; beep(120, 0.3);
-        toast(Math.abs(car.v) < 1 ? 'Engine stalled — use the clutch when stopping, and gas when moving off' : `Engine stalled — too slow for gear ${car.gear}`, 'info');
+        toast(Math.abs(car.v) < 1 ? 'Engine stalled — use the clutch when stopping, and gas when moving off' : TL`Engine stalled — too slow for gear ${car.gear}`, 'info');
         if (steps.length) penalize('Stalled the engine', 5, 2);
       } else {
         if (keys.gas) acc = dirn * g.acc * (1 - vg / g.max) * engage * clamp(vg / (0.3 * g.max), g.low, 1);
@@ -1031,7 +1039,7 @@ function checkRules(dt) {
     let dth = car.th - entryTh; dth = Math.atan2(Math.sin(dth), Math.cos(dth));
     if (Math.abs(dth) > 0.8) {
       const dir = dth > 0 ? 1 : -1;
-      if (entrySig !== dir) penalize(`No ${dir > 0 ? 'left' : 'right'} turn signal`, 5, 1);
+      if (entrySig !== dir) penalize(dir > 0 ? 'No left turn signal' : 'No right turn signal', 5, 1);
       if (car.signal === dir) car.signal = 0;   // self-cancelling indicator
     }
   }
@@ -1181,11 +1189,31 @@ function frame(now) {
 }
 
 // ---------------------------------------------------------------- UI wiring
-for (const l of LESSONS) {
-  const b = document.createElement('button'); b.className = 'lesson';
-  b.innerHTML = '<b></b><span></span>'; b.children[0].textContent = l.title; b.children[1].textContent = l.desc;
-  b.onclick = () => startLesson(l); $('lessons').appendChild(b);
+const HELP = [   // [keys, what they do]
+  ['<kbd>W</kbd>/<kbd>↑</kbd>', 'accelerate'], ['<kbd>S</kbd>/<kbd>↓</kbd>', 'brake'], ['<kbd>A</kbd> <kbd>D</kbd> / <kbd>←</kbd> <kbd>→</kbd>', 'steer'],
+  ['<kbd>B</kbd>', 'seatbelt'], ['<kbd>I</kbd>', 'engine'], ['<kbd>Z</kbd> <kbd>X</kbd>', 'gear down / up'], ['<kbd>Shift</kbd>', 'clutch (manual gearbox)'],
+  ['<kbd>Q</kbd> <kbd>E</kbd>', 'left / right turn signal'], ['<kbd>Space</kbd>', 'parking brake'], ['<kbd>H</kbd>', 'horn'], ['<kbd>C</kbd>', 'camera'],
+  ['<kbd>V</kbd>', 'mirrors on / off'], ['<kbd>R</kbd>', 'restart lesson'], ['<kbd>Esc</kbd>', 'pause'], ['<kbd>M</kbd>', 'sound on / off'],
+];
+function applyLanguage() {   // (re)draw every fixed text in the chosen language
+  document.documentElement.lang = lang;
+  for (const el of document.querySelectorAll('[data-tr]')) { el.dataset.en = el.dataset.en || el.textContent; el.textContent = tr(el.dataset.en); }
+  $('lessons').innerHTML = '';
+  for (const l of LESSONS) {
+    const b = document.createElement('button'); b.className = 'lesson';
+    b.innerHTML = '<b></b><span></span>'; b.children[0].textContent = tr(l.title); b.children[1].textContent = tr(l.desc);
+    b.onclick = () => startLesson(l); $('lessons').appendChild(b);
+  }
+  $('help').innerHTML = HELP.map(([k, what]) => `<div>${k} ${tr(what)}</div>`).join('');
+  for (const o of $('langSel').children) o.classList.toggle('on', o.dataset.lang === lang);
 }
+try { if (localStorage.getItem('driveready.lang') === 'ta') lang = 'ta'; } catch (e) { /* storage unavailable */ }
+for (const b of $('langSel').children) b.onclick = () => {
+  lang = b.dataset.lang;
+  try { localStorage.setItem('driveready.lang', lang); } catch (e) { /* storage unavailable */ }
+  applyLanguage();
+};
+applyLanguage();
 for (const b of $('sideSel').children) b.onclick = () => {
   side = +b.dataset.side;
   for (const o of $('sideSel').children) o.classList.toggle('on', o === b);
@@ -1215,6 +1243,6 @@ for (const b of $('gearSel').children) b.onclick = () => {
 };
 applyGearbox();
 buildWorld();
-window.__sim = { car, keys, get state() { return state; }, get score() { return score; }, get stepIdx() { return stepIdx; }, get traffic() { return traffic; }, get peds() { return peds; }, get crosswalks() { return crosswalks; }, get violations() { return violations; } };
+window.__sim = { car, keys, tr, get lang() { return lang; }, get state() { return state; }, get score() { return score; }, get stepIdx() { return stepIdx; }, get traffic() { return traffic; }, get peds() { return peds; }, get crosswalks() { return crosswalks; }, get violations() { return violations; } };
 requestAnimationFrame(frame);
 })();

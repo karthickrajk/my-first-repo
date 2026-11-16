@@ -9,6 +9,16 @@ traffic lights and an instructor who scores every mistake.
 Open `index.html` in a browser — no install or build step. (Three.js is bundled
 in `vendor/three.min.js`.)
 
+## Play online
+
+Every push to `master` publishes the game for free on GitHub Pages:
+https://karthickrajk.github.io/my-first-repo/
+
+## Language
+
+The menu switches between English and Tamil (தமிழ்). All menus, instructor
+messages and penalties are translated; the choice is remembered.
+
 ## Windows app (.exe)
 
 `app.py` is a small Python launcher that opens the game in its own window.
