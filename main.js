@@ -14,7 +14,16 @@ const HALF = G * S;
 const WB = 2.6;          // wheelbase
 const CW = 0.95, CL = 2.1; // car half width / half length
 const LOT = { x0: 255, x1: 385, z0: -65, z1: 65 }; // training ground
-const GEARS = ['P', 'R', 'N', 'D'];
+const AUTO_GEARS = ['P', 'R', 'N', 'D'], MANUAL_GEARS = ['R', 'N', '1', '2', '3', '4', '5'];
+// manual gearbox: top speed (m/s), pull, engine braking, torque floor at low revs, stall speeds with / without gas
+const MG = {
+  R: { max: 9, acc: 2.6, brake: 1.2, low: 1, gasMin: -1, idleMin: 0.8, creep: 1.6 },
+  1: { max: 12, acc: 3.8, brake: 1.4, low: 1, gasMin: -1, idleMin: 0.8, creep: 1.6 },
+  2: { max: 20, acc: 2.9, brake: 0.9, low: 0.5, gasMin: 0, idleMin: 2.5 },
+  3: { max: 30, acc: 2.1, brake: 0.6, low: 0.3, gasMin: 3, idleMin: 5 },
+  4: { max: 40, acc: 1.5, brake: 0.4, low: 0.25, gasMin: 6, idleMin: 8 },
+  5: { max: 48, acc: 1.1, brake: 0.3, low: 0.25, gasMin: 9, idleMin: 11 },
+};
 const PASS_SCORE = 70, FAIL_SCORE = 40;
 const DIRS = [[1, 0], [-1, 0], [0, 1], [0, -1]];
 // Road segments are keyed by axis and their lower-index node: 'x:i,j' runs from node (i,j) to (i+1,j).
@@ -38,6 +47,7 @@ window.addEventListener('resize', resize);
 resize();
 
 // ---------------------------------------------------------------- state
+let manual = false;     // manual gearbox with clutch instead of the automatic
 let side = -1;           // -1 = traffic keeps left (default, as in India), 1 = keeps right
 let scene, sun, nodes, colliders, drivable, ring, lessonGroup, playerMesh;
 let traffic = [], cones = [], statics = [], peds = [], crosswalks = [];
@@ -47,8 +57,12 @@ let score = 100, violations = {}, lastPen = {}, clock = 0;
 let camMode = 0;         // 0 chase, 1 cockpit, 2 top
 let wrongT = 0, curNode = null, entryTh = 0, entrySig = 0, activeBox = null;
 let curLimit = 50, limitSince = 0, stopNode = null, stopTime = -99;
-const car = { x: 0, z: 0, th: 0, v: 0, steer: 0, gear: 'P', engine: false, belt: false, signal: 0 };
-const keys = { gas: false, brake: false, left: false, right: false, hand: false };
+const car = { x: 0, z: 0, th: 0, v: 0, steer: 0, gear: 'P', engine: false, belt: false, signal: 0, clutch: 0, hand: false, rpm: 0 };
+const keys = { gas: false, brake: false, left: false, right: false, clutch: false };
+const gearList = () => manual ? MANUAL_GEARS : AUTO_GEARS;
+const tx = (auto, man) => manual ? man : auto;   // lesson text that differs by gearbox
+const inDriveGear = () => manual ? car.gear === '1' && !car.hand : car.gear === 'D';
+const isSecured = () => manual ? car.gear === 'N' && car.hand : car.gear === 'P';
 
 // lane-side vector for a travel direction (points towards the kerb you drive next to)
 const laneVec = d => [-d[1] * side, d[0] * side];
@@ -566,6 +580,15 @@ function addBox(b) { // painted target box, turns green while the car is fully i
   b.mats = [mat, fill];
   return b;
 }
+// Cones along every boundary point that is not inside another part of the track (so junctions stay open).
+function coneTrack(points, lanes) {
+  for (const [x, z] of points)
+    if (!lanes.some(f => f(x, z)) && !cones.some(c => Math.hypot(c.x - x, c.z - z) < 0.7)) addCone(x, z);
+}
+function circlePts(cx, cz, r, gap) { const n = Math.round(2 * Math.PI * r / gap), o = []; for (let k = 0; k < n; k++) o.push([cx + Math.cos(k / n * 2 * Math.PI) * r, cz + Math.sin(k / n * 2 * Math.PI) * r]); return o; }
+function linePts(x0, z0, x1, z1, gap) { const n = Math.ceil(Math.hypot(x1 - x0, z1 - z0) / gap), o = []; for (let k = 0; k <= n; k++) o.push([x0 + (x1 - x0) * k / n, z0 + (z1 - z0) * k / n]); return o; }
+const SECURE_TXT = () => tx('select P', 'apply the parking brake (Space) and select neutral');
+const READY_TXT = () => tx('Get ready: seatbelt (B), engine (I), select Drive (X).', 'Get ready: seatbelt (B), engine (I), hold the clutch (Shift), select 1st (X) and release the parking brake (Space).');
 const cityStart = () => { const l = laneVec([1, 0]); return { x: -120 + l[0] * LANE, z: l[1] * LANE, th: Math.PI / 2 }; };
 
 const LESSONS = [
@@ -576,13 +599,13 @@ const LESSONS = [
       const gates = [[X + 4, -25], [X - 4, -10], [X + 4, 5], [X - 4, 20]];
       return { start: { x: X, z: -52, th: 0 }, steps: [
         { type: 'belt', text: 'Welcome! Before anything else, fasten your seatbelt — press B.' },
-        { type: 'engine', text: 'Start the engine — press I.' },
-        { type: 'gear', gear: 'D', text: 'Select Drive: press X to move the selector P → R → N → D.' },
-        ...gates.map(([x, z], k) => ({ type: 'cp', x, z, r: 2.6, text: k ? 'Keep weaving — pass the next cone on the other side. Gentle steering, low speed.' : 'Accelerate gently (W) and slalom through the cones. Drive through each yellow marker.' })),
+        { type: 'engine', text: tx('Start the engine — press I.', 'Check the gear is in neutral (N), then start the engine — press I.') },
+        { type: 'drive', text: tx('Select Drive: press X to move the selector P → R → N → D.', 'Hold the clutch (Shift) and select 1st gear (X). Then release the parking brake (Space).') },
+        ...gates.map(([x, z], k) => ({ type: 'cp', x, z, r: 2.6, text: k ? 'Keep weaving — pass the next cone on the other side. Gentle steering, low speed.' : tx('Accelerate gently (W) and slalom through the cones. Drive through each yellow marker.', 'Press the gas (W) and let the clutch (Shift) come up to move off. Slalom through the cones, driving through each yellow marker.') })),
         { type: 'cp', x: X, z: 40, r: 3.5, text: 'Straighten up and continue to the marker.' },
         { type: 'cp', x: 305, z: 52, r: 3.5, text: 'Turn left towards the stopping box. Remember the 20 km/h limit.' },
-        { type: 'stop', box, text: 'Stop completely inside the yellow box (S to brake).' },
-        { type: 'gear', gear: 'P', text: 'Good stop! Now select Park — press Z until P is highlighted.' },
+        { type: 'stop', box, text: tx('Stop completely inside the yellow box (S to brake).', 'Stop completely inside the yellow box: clutch down (Shift) before you stop, then brake (S).') },
+        { type: 'secure', text: tx('Good stop! Now select Park — press Z until P is highlighted.', 'Good stop! Apply the parking brake (Space) and select neutral (Z, with the clutch down).') },
       ] };
     } },
   { id: 'parking', title: '2 · Parking', desc: 'Park in the free bay between two cars without touching anything. Try reversing in.', build() {
@@ -597,14 +620,53 @@ const LESSONS = [
       }
       const box = addBox({ x: bx(3), z: bz, th: 0, hw: 1.5, hl: 3.1 });
       return { start: { x: 275, z: -30, th: 0 }, steps: [
-        { type: 'ready', text: 'Get ready: seatbelt (B), engine (I), select Drive (X).' },
+        { type: 'ready', text: READY_TXT() },
         { type: 'cp', x: 310, z: 30, r: 5, text: 'Drive to the row of parked cars. Use the top camera (C) to see the bay.' },
-        { type: 'stop', box, park: true, text: 'Park fully inside the free bay, stop, and select P. For reverse: stop, select R (Z), steer and back in slowly.' },
+        { type: 'stop', box, park: true, text: `Park fully inside the free bay, stop, then ${SECURE_TXT()}. For reverse: stop, select R (Z), steer and back in slowly.` },
       ] };
     } },
-  { id: 'city', title: '3 · City exam', desc: 'Follow the route through traffic: obey lights and signs, give way to pedestrians, signal every turn.', build() {
+  { id: 'eight', title: '3 · "8" track', desc: 'Drive a figure of eight between the cones — one loop each way — without touching any.', build() {
+      const cx = 320, cz = 0, R = 9, hw = 2.3, len = 24;
+      const lanes = [(x, z) => Math.abs(Math.hypot(x - cx, z - (cz - R)) - R) < hw - 0.2, (x, z) => Math.abs(Math.hypot(x - cx, z - (cz + R)) - R) < hw - 0.2,
+        (x, z) => Math.abs(z - cz) < hw - 0.2 && Math.abs(x - cx) < len + 0.5];
+      const pts = [];
+      for (const sgn of [1, -1]) {
+        pts.push(...circlePts(cx, cz + sgn * R, R - hw, 1.9), ...circlePts(cx, cz + sgn * R, R + hw, 1.9));
+        pts.push(...linePts(cx - len, cz + sgn * hw, cx + len, cz + sgn * hw, 1.9));
+      }
+      coneTrack(pts, lanes);
+      const box = addBox({ x: cx + len + 9, z: cz, th: Math.PI / 2, hw: 2.3, hl: 4.2 });
+      const cp = (x, z, text) => ({ type: 'cp', x, z, r: 2.3, text });
+      const b = 'First loop: steer right and keep a slow, steady speed all the way round.', a = 'Second loop: cross the centre and steer left around the other circle.';
+      return { start: { x: cx - len - 8, z: cz, th: Math.PI / 2 }, steps: [
+        { type: 'ready', text: READY_TXT() },
+        cp(cx + R, cz + R, 'Drive in along the lane. At the centre, start the first loop to the right. Do not touch the cones.'),
+        cp(cx, cz + 2 * R, b), cp(cx - R, cz + R, b),
+        cp(cx + R, cz - R, a), cp(cx, cz - 2 * R, a), cp(cx - R, cz - R, a),
+        { type: 'stop', box, park: true, text: `Leave through the centre, stop in the yellow box, then ${SECURE_TXT()}.` },
+      ] };
+    } },
+  { id: 'h', title: '4 · "H" track', desc: 'Drive forward through the H — up one leg, across the bar, up the other — then reverse all the way back.', build() {
+      const hx = 320, hz = 0, D = 10, L = 18, hw = 3;
+      const rects = [[hx - D, hz, hw, L], [hx + D, hz, hw, L], [hx, hz, D, hw]];   // centre x, z, half x, half z
+      const lanes = rects.map(([x0, z0, a, b]) => (x, z) => Math.abs(x - x0) < a - 0.2 && Math.abs(z - z0) < b - 0.2);
+      const pts = [];
+      for (const [x0, z0, a, b] of rects) for (const sgn of [1, -1])
+        pts.push(...linePts(x0 - a, z0 + sgn * b, x0 + a, z0 + sgn * b, 1.8), ...linePts(x0 + sgn * a, z0 - b, x0 + sgn * a, z0 + b, 1.8));
+      coneTrack(pts, lanes);
+      const far = addBox({ x: hx + D, z: hz + 12, th: 0, hw: 2.4, hl: 3.6 }), home = addBox({ x: hx - D, z: hz - 12, th: 0, hw: 2.4, hl: 3.6 });
+      return { start: { x: hx - D, z: hz - 12, th: 0 }, steps: [
+        { type: 'ready', text: READY_TXT() },
+        { type: 'cp', x: hx, z: hz, r: 2.6, text: 'Forward: drive up the leg and turn left into the crossbar. Go slowly and do not touch the cones.' },
+        { type: 'stop', box: far, text: 'Turn right into the far leg and stop inside the yellow box at the end.' },
+        { type: 'reverse', text: tx('Now select reverse — press Z until R is highlighted.', 'Now select reverse — hold the clutch (Shift) and press Z until R is highlighted.') },
+        { type: 'cp', x: hx, z: hz, r: 2.6, text: 'Reverse back the way you came: down the leg and round into the crossbar. The top camera (C) helps.' },
+        { type: 'stop', box: home, park: true, text: `Keep reversing round into the first leg, stop in the starting box, then ${SECURE_TXT()}.` },
+      ] };
+    } },
+  { id: 'city', title: '5 · City exam', desc: 'Follow the route through traffic: obey lights and signs, give way to pedestrians, signal every turn.', build() {
       const route = [[-2, 0], [-1, 0], [0, 0], [0, 1], [1, 1], [1, 0], [1, -1], [0, -1], [-1, -1], [-1, 0], [-2, 0]];
-      const st = [{ type: 'ready', text: 'Exam start. Seatbelt (B), engine (I), Drive (X). Watch for speed-limit signs, STOP signs and zebra crossings.' }];
+      const st = [{ type: 'ready', text: READY_TXT() + ' Watch for speed-limit signs, STOP signs and zebra crossings.' }];
       for (let k = 1; k < route.length - 1; k++) {
         const a = route[k], b = route[k + 1], p = route[k - 1];
         const d = [b[0] - a[0], b[1] - a[1]], d0 = [a[0] - p[0], a[1] - p[1]], l = laneVec(d);
@@ -617,7 +679,7 @@ const LESSONS = [
         const mx = (a[0] + b[0]) / 2 * S + l[0] * LANE, mz = (a[1] + b[1]) / 2 * S + l[1] * LANE;
         if (k === route.length - 2) {
           const box = addBox({ x: mx + l[0] * 0.6, z: mz + l[1] * 0.6, th: Math.atan2(d[0], d[1]), hw: 2.2, hl: 5 });
-          st.push({ type: 'stop', box, park: true, text: text + extra + ' Then pull over in the yellow box, stop and select P.' });
+          st.push({ type: 'stop', box, park: true, text: text + extra + ` Then pull over in the yellow box, stop and ${SECURE_TXT()}.` });
         } else st.push({ type: 'cp', x: mx, z: mz, r: 4.5, text: text + extra });
       }
       return { start: cityStart(), steps: st };
@@ -634,7 +696,7 @@ function startLesson(l) {
   cones = []; statics = [];
   const built = l.build();
   steps = built.steps; stepIdx = 0; startPose = built.start;
-  Object.assign(car, built.start, { v: 0, steer: 0, gear: 'P', engine: false, belt: false, signal: 0 });
+  Object.assign(car, built.start, { v: 0, steer: 0, gear: manual ? 'N' : 'P', engine: false, belt: false, signal: 0, clutch: 0, hand: manual, rpm: 0 });
   score = 100; violations = {}; lastPen = {}; wrongT = 0; curNode = null; activeBox = null;
   curLimit = limitAt(car.x, car.z) || 50; limitSince = clock; stopNode = null;
   spawnTraffic(16);
@@ -658,10 +720,12 @@ function stepDone(s) {
   switch (s.type) {
     case 'belt': return car.belt;
     case 'engine': return car.engine;
-    case 'gear': return car.gear === s.gear;
-    case 'ready': return car.belt && car.engine && car.gear === 'D';
+    case 'drive': return inDriveGear();
+    case 'secure': return isSecured() && Math.abs(car.v) < 0.15;
+    case 'reverse': return car.gear === 'R';
+    case 'ready': return car.belt && car.engine && inDriveGear();
     case 'cp': return Math.hypot(car.x - s.x, car.z - s.z) < s.r;
-    case 'stop': return inBox(s.box) && Math.abs(car.v) < 0.15 && (!s.park || car.gear === 'P');
+    case 'stop': return inBox(s.box) && Math.abs(car.v) < 0.15 && (!s.park || isSecured());
   }
 }
 function finish(passed, why) {
@@ -701,15 +765,24 @@ function penalize(name, pts, cooldown) {
 
 // ---------------------------------------------------------------- controls
 function setGear(g) {
-  if (g === car.gear || !GEARS.includes(g)) return;
+  if (g === car.gear || !gearList().includes(g)) return;
+  if (manual) {
+    if (car.engine && car.clutch < 0.7) return toast('Press the clutch (Shift) to change gear', 'info');
+    if (MG[g] && g !== 'R') {
+      if (car.v < -1) return toast('Stop before selecting a forward gear', 'info');
+      if (car.v > MG[g].max * 1.15) return toast(`Too fast for gear ${g}`, 'info');
+    }
+  }
   if (g === 'P' && Math.abs(car.v) > 0.5) return toast('Stop before selecting P', 'info');
   if (g === 'R' && car.v > 1) return toast('Stop before selecting R', 'info');
   if (g === 'D' && car.v < -1) return toast('Stop before selecting D', 'info');
   car.gear = g; beep(520, 0.04);
 }
-const shift = dir => setGear(GEARS[clamp(GEARS.indexOf(car.gear) + dir, 0, 3)]);
+const shift = dir => { const l = gearList(); setGear(l[clamp(l.indexOf(car.gear) + dir, 0, l.length - 1)]); };
+const toggleHand = () => { car.hand = !car.hand; beep(car.hand ? 300 : 420, 0.05); };
 function toggleEngine() {
-  if (!car.engine && car.gear !== 'P' && car.gear !== 'N') return toast('Select P or N to start the engine', 'info');
+  if (!car.engine && manual && car.gear !== 'N' && !keys.clutch) return toast('Select neutral or hold the clutch to start', 'info');
+  if (!car.engine && !manual && car.gear !== 'P' && car.gear !== 'N') return toast('Select P or N to start the engine', 'info');
   car.engine = !car.engine;
 }
 const toggleBelt = () => { car.belt = !car.belt; beep(700, 0.05); };
@@ -718,9 +791,10 @@ function togglePause() {
   if (state === 'run') { state = 'pause'; $('pause').hidden = false; }
   else if (state === 'pause') { state = 'run'; $('pause').hidden = true; }
 }
-const HOLD = { KeyW: 'gas', ArrowUp: 'gas', KeyS: 'brake', ArrowDown: 'brake', KeyA: 'left', ArrowLeft: 'left', KeyD: 'right', ArrowRight: 'right', Space: 'hand' };
+const HOLD = { KeyW: 'gas', ArrowUp: 'gas', KeyS: 'brake', ArrowDown: 'brake', KeyA: 'left', ArrowLeft: 'left', KeyD: 'right', ArrowRight: 'right', ShiftLeft: 'clutch', ShiftRight: 'clutch' };
 window.addEventListener('keydown', e => {
   if (HOLD[e.code]) { keys[HOLD[e.code]] = true; e.preventDefault(); return; }
+  if (e.code === 'Space') e.preventDefault();   // parking brake, not "click the focused button"
   if (e.repeat) return;
   if (e.code === 'Escape') return togglePause();
   if (e.code === 'KeyM') { muted = !muted; return; }
@@ -734,10 +808,13 @@ window.addEventListener('keydown', e => {
     case 'KeyE': toggleSignal(-1); break;
     case 'KeyC': camMode = (camMode + 1) % 3; break;
     case 'KeyR': startLesson(lesson); break;
-    case 'Digit1': case 'Digit2': case 'Digit3': case 'Digit4': setGear(GEARS[+e.code.slice(5) - 1]); break;
+    case 'Space': toggleHand(); break;
+    case 'KeyN': case 'Digit0': setGear('N'); break;
+    case 'Digit1': case 'Digit2': case 'Digit3': case 'Digit4': case 'Digit5':
+      setGear(manual ? e.code.slice(5) : AUTO_GEARS[+e.code.slice(5) - 1]); break;
   }
 });
-window.addEventListener('keyup', e => { if (HOLD[e.code]) keys[HOLD[e.code]] = false; });
+window.addEventListener('keyup', e => { if (HOLD[e.code]) keys[HOLD[e.code]] = false; if (e.code === 'Space') e.preventDefault(); });
 window.addEventListener('blur', () => { for (const k in keys) keys[k] = false; });
 
 // ---------------------------------------------------------------- audio (tiny synth, no assets)
@@ -762,7 +839,7 @@ function updateAudio() {
   if (!actx) return;
   const on = car.engine && state === 'run' && !muted;
   engGain.gain.setTargetAtTime(on ? 0.035 + (keys.gas ? 0.025 : 0) : 0, actx.currentTime, 0.08);
-  engOsc.frequency.setTargetAtTime(48 + Math.abs(car.v) * 5.5 + (keys.gas ? 18 : 0), actx.currentTime, 0.1);
+  engOsc.frequency.setTargetAtTime(manual ? 30 + car.rpm / 38 : 48 + Math.abs(car.v) * 5.5 + (keys.gas ? 18 : 0), actx.currentTime, 0.1);
 }
 
 // ---------------------------------------------------------------- player update
@@ -774,13 +851,33 @@ function updateCar(dt) {
   car.steer = clamp(car.steer + clamp(st * maxSt - car.steer, -rate, rate), -maxSt, maxSt);
 
   let acc = 0;
-  if (car.engine && keys.gas) {
+  const hint = text => { if (clock - (lastPen._hint ?? -9) > 4) { lastPen._hint = clock; toast(text, 'info'); } };
+  if (keys.gas && car.hand && Math.abs(car.v) < 1) hint('Release the parking brake (Space)');
+  if (manual) {
+    car.clutch = keys.clutch ? Math.min(1, car.clutch + dt * 8) : Math.max(0, car.clutch - dt * 1.6);   // pedal comes up gradually
+    const g = MG[car.gear], engage = 1 - car.clutch;
+    let rpm = car.engine ? 800 + (keys.gas ? 2600 : 0) : 0;
+    if (g && car.engine) {
+      const dirn = car.gear === 'R' ? -1 : 1, vg = car.v * dirn;   // speed in the direction the gear drives
+      if (car.clutch < 0.15 && vg < (keys.gas ? g.gasMin : g.idleMin)) {
+        car.engine = false; rpm = 0; beep(120, 0.3);
+        toast(Math.abs(car.v) < 1 ? 'Engine stalled — use the clutch when stopping, and gas when moving off' : `Engine stalled — too slow for gear ${car.gear}`, 'info');
+        if (steps.length) penalize('Stalled the engine', 5, 2);
+      } else {
+        if (keys.gas) acc = dirn * g.acc * (1 - vg / g.max) * engage * clamp(vg / (0.3 * g.max), g.low, 1);
+        else if (g.creep && vg < g.creep) acc = dirn * engage;                                  // idles along in 1st / reverse
+        else acc = -dirn * engage * g.brake * (1 + 3 * Math.max(0, vg / g.max - 1));           // engine braking
+        if (car.clutch < 0.5) rpm = 800 + Math.max(0, vg) / g.max * 5700;
+      }
+    } else if (keys.gas && !car.engine) hint('Engine is off — press I');
+    car.rpm += (rpm - car.rpm) * Math.min(1, dt * 8);
+  } else if (car.engine && keys.gas) {
     if (car.gear === 'D') acc = 3.6 * (1 - car.v / 45);
     else if (car.gear === 'R') acc = -2.5 * (1 + car.v / 9);
     else if (clock - (lastPen._hint ?? -9) > 4) { lastPen._hint = clock; toast('Select D or R to move', 'info'); }
   } else if (!car.engine && keys.gas && clock - (lastPen._hint ?? -9) > 4) { lastPen._hint = clock; toast('Engine is off — press I', 'info'); }
   car.v += acc * dt;
-  const dec = (0.35 + 0.0005 * vabs * vabs + (keys.brake ? 9 : 0) + (keys.hand ? 6 : 0) + (car.gear === 'P' ? 20 : 0)) * dt;
+  const dec = (0.35 + 0.0005 * vabs * vabs + (keys.brake ? 9 : 0) + (car.hand ? 12 : 0) + (car.gear === 'P' ? 20 : 0)) * dt;
   car.v = Math.abs(car.v) <= dec ? 0 : car.v - Math.sign(car.v) * dec;
 
   car.x += Math.sin(car.th) * car.v * dt;
@@ -899,14 +996,22 @@ function updateCamera(dt) {
 }
 
 // ---------------------------------------------------------------- HUD
-const gearBtns = GEARS.map(g => { const b = document.createElement('button'); b.textContent = g; b.onclick = () => setGear(g); $('gears').appendChild(b); return b; });
+let gearBtns = [];
+function applyGearbox() {   // rebuild the selector for the chosen transmission
+  $('gears').innerHTML = '';
+  gearBtns = gearList().map(g => { const b = document.createElement('button'); b.textContent = g; b.onclick = () => setGear(g); $('gears').appendChild(b); return b; });
+  document.body.classList.toggle('manual', manual);
+  for (const o of $('gearSel').children) o.classList.toggle('on', (o.dataset.manual === '1') === manual);
+}
 const mapCtx = $('map').getContext('2d');
 function updateHud(limit, blinkOn) {
   const kmh = Math.round(Math.abs(car.v) * 3.6);
   $('speed').textContent = kmh; $('speed').classList.toggle('over', kmh > limit + 3);
   $('limit').textContent = limit;
   $('score').textContent = Math.max(0, score);
-  gearBtns.forEach((b, k) => b.classList.toggle('on', GEARS[k] === car.gear));
+  gearBtns.forEach((b, k) => b.classList.toggle('on', gearList()[k] === car.gear));
+  $('hand').classList.toggle('on', car.hand);
+  if (manual) { $('rpmFill').style.width = clamp(car.rpm / 6500, 0, 1) * 100 + '%'; $('rpmFill').classList.toggle('red', car.rpm > 5600); }
   $('belt').classList.toggle('on', car.belt); $('engine').classList.toggle('on', car.engine);
   $('sigL').classList.toggle('on', car.signal === 1 && blinkOn); $('sigR').classList.toggle('on', car.signal === -1 && blinkOn);
 
@@ -966,7 +1071,7 @@ function frame(now) {
     const u = playerMesh.userData;
     u.fw.forEach(p => { p.rotation.y = car.steer; });
     u.wheel.rotation.z = -car.steer * 4;
-    setCarLamps(playerMesh, keys.brake || car.gear === 'P', car.signal, blinkOn);
+    setCarLamps(playerMesh, keys.brake || car.gear === 'P' || car.hand, car.signal, blinkOn);
     updateAudio();
   }
   updateCamera(dt);
@@ -986,7 +1091,7 @@ for (const b of $('sideSel').children) b.onclick = () => {
   buildWorld();
 };
 $('sigL').onclick = () => toggleSignal(1); $('sigR').onclick = () => toggleSignal(-1);
-$('belt').onclick = toggleBelt; $('engine').onclick = toggleEngine;
+$('belt').onclick = toggleBelt; $('engine').onclick = toggleEngine; $('hand').onclick = toggleHand;
 $('cam').onclick = () => { camMode = (camMode + 1) % 3; };
 $('pauseBtn').onclick = togglePause; $('resume').onclick = togglePause;
 $('restart').onclick = $('retry').onclick = () => startLesson(lesson);
@@ -1000,6 +1105,13 @@ if ('ontouchstart' in window || navigator.maxTouchPoints > 0) document.body.clas
 
 try { const s = +localStorage.getItem('driveready.side'); if (s === 1 || s === -1) side = s; } catch (e) { /* storage unavailable */ }
 for (const o of $('sideSel').children) o.classList.toggle('on', +o.dataset.side === side);
+try { manual = localStorage.getItem('driveready.manual') === '1'; } catch (e) { /* storage unavailable */ }
+for (const b of $('gearSel').children) b.onclick = () => {
+  manual = b.dataset.manual === '1';
+  try { localStorage.setItem('driveready.manual', manual ? '1' : '0'); } catch (e) { /* storage unavailable */ }
+  applyGearbox();
+};
+applyGearbox();
 buildWorld();
 window.__sim = { car, keys, get state() { return state; }, get score() { return score; }, get stepIdx() { return stepIdx; }, get traffic() { return traffic; }, get peds() { return peds; }, get crosswalks() { return crosswalks; }, get violations() { return violations; } };
 requestAnimationFrame(frame);

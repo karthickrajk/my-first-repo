@@ -33,7 +33,7 @@
   .toast.good { background: rgba(20,140,80,.92); }
   @keyframes pop { from { transform: scale(.7); opacity: 0; } }
 
-  #dash { position: fixed; bottom: 12px; left: 50%; transform: translateX(-50%); padding: 8px 12px; display: flex; gap: 12px; align-items: center; }
+  #dash { position: fixed; bottom: 12px; left: 0; right: 0; margin: 0 auto; width: fit-content; padding: 8px 12px; display: flex; gap: 10px; align-items: center; max-width: calc(100vw - 16px); flex-wrap: wrap; justify-content: center; }
   #speedBox { text-align: center; min-width: 76px; }
   #speed { font-size: 34px; font-weight: 800; line-height: 1; font-variant-numeric: tabular-nums; }
   #speedBox small { color: var(--dim); font-size: 11px; }
@@ -45,6 +45,13 @@
   #gears button.on { background: var(--acc); color: #111; border-color: var(--acc); }
   .tog { padding: 7px 10px; border-radius: 8px; border: 1px solid var(--line); background: rgba(255,255,255,.05); font-size: 12px; font-weight: 700; color: var(--dim); }
   .tog.on { color: #111; background: var(--ok); border-color: var(--ok); }
+  .tog.warn.on { background: var(--bad); border-color: var(--bad); color: #fff; }
+  #rpm { display: none; height: 5px; margin-top: 4px; border-radius: 3px; background: rgba(255,255,255,.12); overflow: hidden; }
+  .manual #rpm { display: block; }
+  #rpmFill { height: 100%; width: 0; background: var(--acc); }
+  #rpmFill.red { background: var(--bad); }
+  .manualOnly { display: none; }
+  .manual .manualOnly { display: revert; }
 
   /* touch pads */
   .pads { position: fixed; bottom: 84px; display: none; gap: 10px; }
@@ -100,15 +107,16 @@
     <div id="scoreBox" class="panel"><div><small style="color:var(--dim)">SCORE</small><div id="score">100</div></div><div id="limit">50</div></div>
     <canvas id="map" width="340" height="340"></canvas>
   </div>
-  <div id="padL" class="pads"><button class="pad" data-key="left">◀</button><button class="pad" data-key="right">▶</button></div>
+  <div id="padL" class="pads"><button class="pad tall manualOnly" data-key="clutch">CLUTCH</button><button class="pad" data-key="left">◀</button><button class="pad" data-key="right">▶</button></div>
   <div id="padR" class="pads"><button class="pad tall" data-key="brake">BRAKE</button><button class="pad tall" data-key="gas">GAS</button></div>
   <div id="dash" class="panel">
     <button class="sig" id="sigL" title="Left signal (Q)">⬅</button>
-    <div id="speedBox"><div id="speed">0</div><small>km/h</small></div>
+    <div id="speedBox"><div id="speed">0</div><small>km/h</small><div id="rpm" title="Engine revs"><div id="rpmFill"></div></div></div>
     <button class="sig" id="sigR" title="Right signal (E)">➡</button>
     <div id="gears"></div>
     <button class="tog" id="belt" title="Seatbelt (B)">BELT</button>
     <button class="tog" id="engine" title="Engine (I)">ENGINE</button>
+    <button class="tog warn" id="hand" title="Parking brake (Space)">P-BRAKE</button>
     <button class="tog" id="cam" title="Camera (C)">CAM</button>
     <button class="tog" id="pauseBtn" title="Pause (Esc)">II</button>
   </div>
@@ -123,13 +131,18 @@
       <span>Traffic drives on the</span>
       <div class="seg" id="sideSel"><button data-side="-1" class="on">Left</button><button data-side="1">Right</button></div>
     </div>
+    <div class="row">
+      <span>Transmission</span>
+      <div class="seg" id="gearSel"><button data-manual="0" class="on">Automatic</button><button data-manual="1">Manual (clutch)</button></div>
+    </div>
     <div class="keys">
       <div><kbd>W</kbd>/<kbd>↑</kbd> accelerate &nbsp; <kbd>S</kbd>/<kbd>↓</kbd> brake</div>
       <div><kbd>A</kbd> <kbd>D</kbd> / <kbd>←</kbd> <kbd>→</kbd> steer</div>
       <div><kbd>B</kbd> seatbelt &nbsp; <kbd>I</kbd> engine</div>
-      <div><kbd>Z</kbd> <kbd>X</kbd> gear down / up (P R N D)</div>
+      <div><kbd>Z</kbd> <kbd>X</kbd> gear down / up</div>
+      <div><kbd>Shift</kbd> clutch (manual gearbox)</div>
       <div><kbd>Q</kbd> <kbd>E</kbd> left / right turn signal</div>
-      <div><kbd>Space</kbd> handbrake &nbsp; <kbd>C</kbd> camera</div>
+      <div><kbd>Space</kbd> parking brake &nbsp; <kbd>C</kbd> camera</div>
       <div><kbd>R</kbd> restart lesson &nbsp; <kbd>Esc</kbd> pause</div>
       <div><kbd>M</kbd> sound on / off</div>
     </div>
