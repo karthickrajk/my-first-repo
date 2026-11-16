@@ -1,0 +1,158 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,user-scalable=no">
+<title>DriveReady — Driving School Simulator</title>
+<style>
+  :root { --bg: rgba(16,20,28,.82); --line: rgba(255,255,255,.14); --fg: #f2f4f8; --dim: #9aa5b5; --acc: #ffc530; --ok: #3ddc84; --bad: #ff5a52; }
+  * { box-sizing: border-box; }
+  [hidden] { display: none !important; }
+  html, body { margin: 0; height: 100%; overflow: hidden; background: #9fd0ff; color: var(--fg);
+    font: 15px/1.4 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; user-select: none; -webkit-user-select: none; touch-action: none; }
+  canvas#view { position: fixed; inset: 0; width: 100%; height: 100%; display: block; }
+  button { font: inherit; color: inherit; cursor: pointer; }
+  .panel { background: var(--bg); border: 1px solid var(--line); border-radius: 12px; backdrop-filter: blur(6px); }
+
+  /* HUD */
+  #instructor { position: fixed; top: 12px; left: 12px; width: min(340px, 46vw); padding: 12px 14px; }
+  #instructor small { color: var(--acc); font-weight: 700; letter-spacing: .06em; text-transform: uppercase; font-size: 11px; }
+  #stepText { margin-top: 4px; font-size: 15px; }
+  #topRight { position: fixed; top: 12px; right: 12px; display: flex; flex-direction: column; align-items: flex-end; gap: 8px; }
+  #scoreBox { padding: 8px 12px; display: flex; gap: 12px; align-items: center; }
+  #score { font-size: 22px; font-weight: 800; font-variant-numeric: tabular-nums; }
+  #limit { width: 44px; height: 44px; border-radius: 50%; background: #fff; border: 5px solid #d8262c; color: #111;
+    display: grid; place-items: center; font-weight: 800; font-size: 16px; }
+  #map { width: 170px; height: 170px; border-radius: 12px; border: 1px solid var(--line); background: var(--bg); }
+  #nav { position: fixed; top: 12px; left: 50%; transform: translateX(-50%); padding: 6px 14px; display: flex; gap: 10px; align-items: center; }
+  #navArrow { font-size: 26px; color: var(--acc); display: inline-block; line-height: 1; }
+  #navDist { font-weight: 700; font-variant-numeric: tabular-nums; }
+  #toasts { position: fixed; top: 70px; left: 50%; transform: translateX(-50%); display: flex; flex-direction: column; gap: 6px; align-items: center; pointer-events: none; }
+  .toast { padding: 7px 14px; border-radius: 999px; background: rgba(190,30,30,.92); font-weight: 700; animation: pop .25s ease-out; white-space: nowrap; }
+  .toast.info { background: rgba(30,40,60,.92); }
+  .toast.good { background: rgba(20,140,80,.92); }
+  @keyframes pop { from { transform: scale(.7); opacity: 0; } }
+
+  #dash { position: fixed; bottom: 12px; left: 50%; transform: translateX(-50%); padding: 8px 12px; display: flex; gap: 12px; align-items: center; }
+  #speedBox { text-align: center; min-width: 76px; }
+  #speed { font-size: 34px; font-weight: 800; line-height: 1; font-variant-numeric: tabular-nums; }
+  #speedBox small { color: var(--dim); font-size: 11px; }
+  #speed.over { color: var(--bad); }
+  .sig { font-size: 26px; background: none; border: 0; color: #55606f; padding: 2px 6px; }
+  .sig.on { color: var(--ok); }
+  #gears { display: flex; gap: 2px; }
+  #gears button { width: 30px; height: 34px; border-radius: 7px; border: 1px solid var(--line); background: rgba(255,255,255,.05); font-weight: 800; color: var(--dim); }
+  #gears button.on { background: var(--acc); color: #111; border-color: var(--acc); }
+  .tog { padding: 7px 10px; border-radius: 8px; border: 1px solid var(--line); background: rgba(255,255,255,.05); font-size: 12px; font-weight: 700; color: var(--dim); }
+  .tog.on { color: #111; background: var(--ok); border-color: var(--ok); }
+
+  /* touch pads */
+  .pads { position: fixed; bottom: 84px; display: none; gap: 10px; }
+  .touch .pads { display: flex; }
+  #padL { left: 14px; } #padR { right: 14px; }
+  .pad { width: 72px; height: 72px; border-radius: 50%; border: 2px solid var(--line); background: var(--bg); font-size: 26px; font-weight: 800; }
+  .pad:active { background: rgba(255,197,48,.5); }
+  .pad.tall { border-radius: 16px; height: 96px; font-size: 14px; }
+
+  /* overlays */
+  .overlay { position: fixed; inset: 0; display: grid; place-items: center; background: rgba(8,12,20,.55); padding: 16px; overflow: auto; }
+  .card { width: min(760px, 100%); padding: 24px; }
+  h1 { margin: 0; font-size: 30px; letter-spacing: -.01em; }
+  h1 span { color: var(--acc); }
+  h2 { margin: 0 0 10px; font-size: 24px; }
+  .sub { color: var(--dim); margin: 4px 0 18px; }
+  #lessons { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 10px; }
+  .lesson { text-align: left; padding: 14px; border-radius: 10px; border: 1px solid var(--line); background: rgba(255,255,255,.05); }
+  .lesson:hover { border-color: var(--acc); background: rgba(255,197,48,.1); }
+  .lesson b { display: block; font-size: 16px; margin-bottom: 4px; }
+  .lesson span { color: var(--dim); font-size: 13px; }
+  .row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin-top: 16px; }
+  .seg { display: inline-flex; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
+  .seg button { border: 0; background: none; padding: 7px 12px; color: var(--dim); font-weight: 600; }
+  .seg button.on { background: var(--acc); color: #111; }
+  .keys { margin-top: 16px; display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 4px 16px; color: var(--dim); font-size: 13px; }
+  kbd { display: inline-block; min-width: 22px; text-align: center; padding: 1px 6px; border-radius: 5px; border: 1px solid var(--line); background: rgba(255,255,255,.08); color: var(--fg); font: 600 12px ui-monospace, monospace; }
+  .btn { padding: 10px 18px; border-radius: 9px; border: 1px solid var(--line); background: rgba(255,255,255,.07); font-weight: 700; }
+  .btn.primary { background: var(--acc); color: #111; border-color: var(--acc); }
+  #resTitle.pass { color: var(--ok); } #resTitle.fail { color: var(--bad); }
+  #resList { margin: 12px 0; padding: 0; list-style: none; }
+  #resList li { display: flex; justify-content: space-between; padding: 6px 0; border-bottom: 1px solid var(--line); }
+
+  @media (max-width: 720px) {
+    #map { width: 110px; height: 110px; }
+    #instructor { font-size: 13px; padding: 8px 10px; }
+    #stepText { font-size: 13px; }
+    #nav { top: auto; bottom: 84px; }
+    #dash { gap: 6px; padding: 6px 8px; }
+    #speed { font-size: 26px; } #speedBox { min-width: 54px; }
+    .tog { padding: 6px 7px; }
+  }
+</style>
+</head>
+<body>
+<canvas id="view"></canvas>
+
+<div id="hud" hidden>
+  <div id="instructor" class="panel"><small id="stepNum">Instructor</small><div id="stepText"></div></div>
+  <div id="nav" class="panel" hidden><span id="navArrow">▲</span><span id="navDist"></span></div>
+  <div id="toasts"></div>
+  <div id="topRight">
+    <div id="scoreBox" class="panel"><div><small style="color:var(--dim)">SCORE</small><div id="score">100</div></div><div id="limit">50</div></div>
+    <canvas id="map" width="340" height="340"></canvas>
+  </div>
+  <div id="padL" class="pads"><button class="pad" data-key="left">◀</button><button class="pad" data-key="right">▶</button></div>
+  <div id="padR" class="pads"><button class="pad tall" data-key="brake">BRAKE</button><button class="pad tall" data-key="gas">GAS</button></div>
+  <div id="dash" class="panel">
+    <button class="sig" id="sigL" title="Left signal (Q)">⬅</button>
+    <div id="speedBox"><div id="speed">0</div><small>km/h</small></div>
+    <button class="sig" id="sigR" title="Right signal (E)">➡</button>
+    <div id="gears"></div>
+    <button class="tog" id="belt" title="Seatbelt (B)">BELT</button>
+    <button class="tog" id="engine" title="Engine (I)">ENGINE</button>
+    <button class="tog" id="cam" title="Camera (C)">CAM</button>
+    <button class="tog" id="pauseBtn" title="Pause (Esc)">II</button>
+  </div>
+</div>
+
+<div id="menu" class="overlay">
+  <div class="card panel">
+    <h1>Drive<span>Ready</span></h1>
+    <p class="sub">Driving school simulator — learn the controls, practise parking, then pass the city exam with traffic and signals.</p>
+    <div id="lessons"></div>
+    <div class="row">
+      <span>Traffic drives on the</span>
+      <div class="seg" id="sideSel"><button data-side="-1">Left</button><button data-side="1" class="on">Right</button></div>
+    </div>
+    <div class="keys">
+      <div><kbd>W</kbd>/<kbd>↑</kbd> accelerate &nbsp; <kbd>S</kbd>/<kbd>↓</kbd> brake</div>
+      <div><kbd>A</kbd> <kbd>D</kbd> / <kbd>←</kbd> <kbd>→</kbd> steer</div>
+      <div><kbd>B</kbd> seatbelt &nbsp; <kbd>I</kbd> engine</div>
+      <div><kbd>Z</kbd> <kbd>X</kbd> gear down / up (P R N D)</div>
+      <div><kbd>Q</kbd> <kbd>E</kbd> left / right turn signal</div>
+      <div><kbd>Space</kbd> handbrake &nbsp; <kbd>C</kbd> camera</div>
+      <div><kbd>R</kbd> restart lesson &nbsp; <kbd>Esc</kbd> pause</div>
+      <div><kbd>M</kbd> sound on / off</div>
+    </div>
+  </div>
+</div>
+
+<div id="pause" class="overlay" hidden>
+  <div class="card panel" style="width:min(380px,100%)">
+    <h2>Paused</h2>
+    <div class="row"><button class="btn primary" id="resume">Resume</button><button class="btn" id="restart">Restart</button><button class="btn" id="toMenu">Menu</button></div>
+  </div>
+</div>
+
+<div id="result" class="overlay" hidden>
+  <div class="card panel" style="width:min(460px,100%)">
+    <h2 id="resTitle"></h2>
+    <div id="resText" class="sub"></div>
+    <ul id="resList"></ul>
+    <div class="row"><button class="btn primary" id="retry">Try again</button><button class="btn" id="resMenu">Menu</button></div>
+  </div>
+</div>
+
+<script src="vendor/three.min.js"></script>
+<script src="main.js"></script>
+</body>
+</html>
