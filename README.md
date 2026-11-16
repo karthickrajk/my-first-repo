@@ -9,6 +9,17 @@ traffic lights and an instructor who scores every mistake.
 Open `index.html` in a browser — no install or build step. (Three.js is bundled
 in `vendor/three.min.js`.)
 
+## Windows app (.exe)
+
+`app.py` is a small Python launcher that opens the game in its own window.
+
+- **Download:** every push builds `DriveReady.exe` on GitHub — open the repo's
+  *Actions* tab, pick the latest "Build Windows exe" run and download the
+  `DriveReady-windows` artifact.
+- **Build it yourself (Windows, Python 3.9+):** double-click `build_exe.bat`;
+  the result is `dist\DriveReady.exe`.
+- **Run without building:** `pip install pywebview` then `python app.py`.
+
 ## Lessons
 
 | Lesson | What you practise |
