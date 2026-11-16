@@ -28,7 +28,8 @@ in `vendor/three.min.js`.)
 | 2 · Parking | Parking in a free bay between parked cars |
 | 3 · "8" track | A figure of eight between cones, one loop each way |
 | 4 · "H" track | Forward through the H (leg, crossbar, far leg), then reverse all the way back |
-| 5 · City exam | A set route through traffic: lights, STOP signs, 30 km/h zones, zebra crossings, turn signals |
+| 5 · Hill start | Stop on a slope, pull away uphill without rolling back, descend under control |
+| 6 · City exam | A set route through traffic: lights, STOP signs, 30 km/h zones, zebra crossings, turn signals |
 | Free drive | The whole city, no route — mistakes are still called out |
 
 You start with 100 points. Finish with 70 or more to pass; dropping to 40 fails
@@ -40,7 +41,7 @@ the lesson on the spot.
 | Running a red light | 25 |
 | Collision (vehicle, parked car, building) | 20 |
 | Not stopping at a STOP sign, not giving way at a zebra crossing | 15 |
-| Driving on the wrong side / without a seatbelt | 10 |
+| Driving on the wrong side / without a seatbelt, rolling back on the hill | 10 |
 | Speeding (50 km/h city, 30 km/h zones, 20 km/h training ground) | 5 |
 | Leaving the road, knocking a cone, turning without a signal, stalling | 5 |
 
@@ -49,6 +50,10 @@ Traffic keeps left by default (as in India); the menu can switch it to keep righ
 The menu also switches between an **automatic** and a **manual gearbox**. In
 manual you hold the clutch (`Shift`) to change gear, need gas to move off, and
 stall if you stop in gear without the clutch or let the revs drop too low.
+
+A rear-view mirror and two wing mirrors are shown in the chase and cockpit
+cameras (`V` hides them). The horn (`H`) makes pedestrians waiting at a nearby
+crossing hold back.
 
 Pedestrians walk the pavements and cross at the zebra crossings. Road signs show
 the speed limit wherever it changes, mark the two all-way STOP junctions and warn
@@ -67,6 +72,7 @@ of each crossing.
 | `Q` / `E` | Left / right turn signal |
 | `Space` | Parking brake on / off |
 | `C` | Camera: chase, cockpit, top-down |
+| `H`, `V` | Horn, mirrors on / off |
 | `R`, `Esc`, `M` | Restart lesson, pause, mute |
 
 On touch screens, on-screen pedals and steering buttons appear and the

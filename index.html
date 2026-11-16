@@ -50,6 +50,8 @@
   .manual #rpm { display: block; }
   #rpmFill { height: 100%; width: 0; background: var(--acc); }
   #rpmFill.red { background: var(--bad); }
+  .tog.hold:active { background: var(--acc); color: #111; }
+  .mirrors #nav { top: 110px; } .mirrors #toasts { top: 164px; }
   .manualOnly { display: none; }
   .manual .manualOnly { display: revert; }
 
@@ -89,7 +91,8 @@
     #map { width: 110px; height: 110px; }
     #instructor { font-size: 13px; padding: 8px 10px; }
     #stepText { font-size: 13px; }
-    #nav { top: auto; bottom: 84px; }
+    #nav, .mirrors #nav { top: auto; bottom: 84px; }
+    #instructor { top: 76px; } .mirrors #toasts { top: 76px; left: auto; right: 12px; transform: none; align-items: flex-end; }
     #dash { gap: 6px; padding: 6px 8px; }
     #speed { font-size: 26px; } #speedBox { min-width: 54px; }
     .tog { padding: 6px 7px; }
@@ -117,6 +120,7 @@
     <button class="tog" id="belt" title="Seatbelt (B)">BELT</button>
     <button class="tog" id="engine" title="Engine (I)">ENGINE</button>
     <button class="tog warn" id="hand" title="Parking brake (Space)">P-BRAKE</button>
+    <button class="tog hold" data-key="horn" title="Horn (H)">HORN</button>
     <button class="tog" id="cam" title="Camera (C)">CAM</button>
     <button class="tog" id="pauseBtn" title="Pause (Esc)">II</button>
   </div>
@@ -144,6 +148,7 @@
       <div><kbd>Q</kbd> <kbd>E</kbd> left / right turn signal</div>
       <div><kbd>Space</kbd> parking brake &nbsp; <kbd>C</kbd> camera</div>
       <div><kbd>R</kbd> restart lesson &nbsp; <kbd>Esc</kbd> pause</div>
+      <div><kbd>H</kbd> horn &nbsp; <kbd>V</kbd> mirrors on / off</div>
       <div><kbd>M</kbd> sound on / off</div>
     </div>
   </div>

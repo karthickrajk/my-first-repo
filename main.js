@@ -46,6 +46,43 @@ function resize() {
 window.addEventListener('resize', resize);
 resize();
 
+// ---------------------------------------------------------------- mirrors
+// Each mirror is a rear-facing camera on the car rendered to a texture, then drawn flipped on a screen overlay.
+const overlay = new T.Scene(), overlayCam = new T.OrthographicCamera(0, 1, 1, 0, -1, 1);
+let mirrorsOn = true;
+const mirrors = [
+  { id: 'centre', pos: [0, 1.3, -0.4], yaw: 0, fov: 20 },
+  { id: 'left', pos: [1.28, 1.05, 0.5], yaw: -0.22, fov: 30 },
+  { id: 'right', pos: [-1.28, 1.05, 0.5], yaw: 0.22, fov: 30 },
+].map(m => {
+  m.rt = new T.WebGLRenderTarget(64, 64);
+  m.cam = new T.PerspectiveCamera(m.fov, 1, 0.3, 260);   // a camera looks down its -z, which is the car's rear
+  m.cam.position.set(...m.pos); m.cam.rotation.y = m.yaw;
+  const noDepth = { depthTest: false, depthWrite: false };
+  m.frame = new T.Mesh(new T.PlaneGeometry(1, 1), new T.MeshBasicMaterial({ color: 0x0d1016, ...noDepth }));
+  m.quad = new T.Mesh(new T.PlaneGeometry(1, 1), new T.MeshBasicMaterial({ map: m.rt.texture, side: T.DoubleSide, ...noDepth }));
+  m.frame.renderOrder = 0; m.quad.renderOrder = 1;
+  overlay.add(m.frame, m.quad);
+  return m;
+});
+function layoutMirrors() {
+  const W_ = window.innerWidth, H_ = window.innerHeight, small = W_ < 720;
+  overlayCam.right = W_; overlayCam.top = H_; overlayCam.updateProjectionMatrix();
+  const sides = W_ >= 900 && H_ >= 560;
+  for (const m of mirrors) {
+    const centre = m.id === 'centre';
+    const w = centre ? (small ? 190 : 300) : 190, h = centre ? (small ? 54 : 84) : 124;
+    m.show = centre || sides;
+    const cx = centre ? W_ / 2 : m.id === 'left' ? 12 + w / 2 : W_ - 12 - w / 2, cy = H_ - (centre ? 12 : 270) - h / 2;
+    m.quad.position.set(cx, cy, 0); m.quad.scale.set(-w, h, 1);   // negative width = mirror image
+    m.frame.position.set(cx, cy, 0); m.frame.scale.set(w + 8, h + 8, 1);
+    m.cam.aspect = w / h; m.cam.updateProjectionMatrix();
+    const pr = renderer.getPixelRatio(); m.rt.setSize(Math.round(w * pr), Math.round(h * pr));
+  }
+}
+window.addEventListener('resize', layoutMirrors);
+layoutMirrors();
+
 // ---------------------------------------------------------------- state
 let manual = false;     // manual gearbox with clutch instead of the automatic
 let side = -1;           // -1 = traffic keeps left (default, as in India), 1 = keeps right
@@ -58,7 +95,19 @@ let camMode = 0;         // 0 chase, 1 cockpit, 2 top
 let wrongT = 0, curNode = null, entryTh = 0, entrySig = 0, activeBox = null;
 let curLimit = 50, limitSince = 0, stopNode = null, stopTime = -99;
 const car = { x: 0, z: 0, th: 0, v: 0, steer: 0, gear: 'P', engine: false, belt: false, signal: 0, clutch: 0, hand: false, rpm: 0 };
-const keys = { gas: false, brake: false, left: false, right: false, clutch: false };
+const keys = { gas: false, brake: false, left: false, right: false, clutch: false, horn: false };
+let ramp = null, rollDist = 0, lastH = 0;   // hill-start ramp of the current lesson, if any
+function groundH(x, z) {
+  if (!ramp || Math.abs(z - ramp.z) > ramp.hw) return 0;
+  const u = x - ramp.x;
+  if (u <= 0 || u >= ramp.len) return 0;
+  return u < ramp.up ? u / ramp.up * ramp.h : u < ramp.up + ramp.top ? ramp.h : (ramp.len - u) / ramp.up * ramp.h;
+}
+function slopeAhead() {   // rise per metre in the direction the car points
+  if (!ramp) return 0;
+  const fx = Math.sin(car.th) * 0.6, fz = Math.cos(car.th) * 0.6;
+  return (groundH(car.x + fx, car.z + fz) - groundH(car.x - fx, car.z - fz)) / 1.2;
+}
 const gearList = () => manual ? MANUAL_GEARS : AUTO_GEARS;
 const tx = (auto, man) => manual ? man : auto;   // lesson text that differs by gearbox
 const inDriveGear = () => manual ? car.gear === '1' && !car.hand : car.gear === 'D';
@@ -328,6 +377,8 @@ function buildWorld() {
 
   lessonGroup = new T.Group(); scene.add(lessonGroup);
   playerMesh = makeCar(0xd32f2f, true); scene.add(playerMesh);
+  playerMesh.rotation.order = 'YXZ';   // heading first, then pitch on slopes
+  for (const m of mirrors) playerMesh.add(m.cam);
   spawnTraffic(16);
   spawnPeds();
 }
@@ -511,6 +562,7 @@ function updatePeds(dt) {
   for (const p of peds) {
     let nx = p.x, nz = p.z, step = false;
     if (p.kind === 'cross') {
+      if (!p.walking && keys.horn && state === 'run' && Math.hypot(p.x - car.x, p.z - car.z) < 30) p.wait = Math.max(p.wait, 2.5);   // a warning horn makes people wait
       if (!p.walking) { p.wait -= dt; if (p.wait <= 0 && crossingClear(p.cw, vehicles)) p.walking = true; }
       if (p.walking) {
         const x = p.cw.ax === 'x', nu = p.u + p.dir * p.speed * dt;
@@ -573,7 +625,8 @@ function addCone(x, z) {
 function addBox(b) { // painted target box, turns green while the car is fully inside
   const mat = new T.MeshBasicMaterial({ color: 0xffc530 });
   const fill = new T.MeshBasicMaterial({ color: 0xffc530, transparent: true, opacity: 0.18, depthWrite: false });
-  const g = new T.Group(); g.position.set(b.x, 0.1, b.z); g.rotation.y = b.th;
+  const g = new T.Group(); g.position.set(b.x, (b.y || 0) + 0.1, b.z);
+  g.rotation.order = 'YXZ'; g.rotation.y = b.th; g.rotation.x = -(b.pitch || 0);
   flat(g, b.hw * 2, b.hl * 2, fill, 0, 0, 0);
   for (const sgn of [1, -1]) { flat(g, 0.18, b.hl * 2, mat, sgn * b.hw, 0.01, 0); flat(g, b.hw * 2, 0.18, mat, 0, 0.01, sgn * b.hl); }
   lessonGroup.add(g);
@@ -664,7 +717,32 @@ const LESSONS = [
         { type: 'stop', box: home, park: true, text: `Keep reversing round into the first leg, stop in the starting box, then ${SECURE_TXT()}.` },
       ] };
     } },
-  { id: 'city', title: '5 · City exam', desc: 'Follow the route through traffic: obey lights and signs, give way to pedestrians, signal every turn.', build() {
+  { id: 'hill', title: '5 · Hill start', desc: 'Stop on a slope, then pull away uphill without rolling back. Come down the far side under control.', build() {
+      const x0 = 284, z0 = -35, up = 25, top = 12, h = 3.5, hw = 4;
+      ramp = { x: x0, z: z0, up, top, h, len: 2 * up + top, hw };
+      const shape = new T.Shape([new T.Vector2(0, 0), new T.Vector2(up, h), new T.Vector2(up + top, h), new T.Vector2(ramp.len, 0)]);
+      const m = new T.Mesh(new T.ExtrudeGeometry(shape, { depth: 2 * hw, bevelEnabled: false }), lam(0x5a5d64));
+      m.position.set(x0, 0, z0 - hw); m.castShadow = m.receiveShadow = true; lessonGroup.add(m);
+      for (const sgn of [1, -1]) {   // painted edge lines following the slope
+        const pitch = Math.atan(h / up), sl = Math.hypot(up, h), zz = z0 + sgn * (hw - 0.3);
+        for (const [len, x, y, rz] of [[sl, x0 + up / 2, h / 2, pitch], [top, x0 + up + top / 2, h, 0], [sl, x0 + up + top + up / 2, h / 2, -pitch]]) {
+          const line = new T.Mesh(new T.BoxGeometry(len, 0.02, 0.2), MAT.white);
+          line.position.set(x, y + 0.03, zz); line.rotation.z = rz; lessonGroup.add(line);
+        }
+      }
+      const pitch = Math.atan(h / up);
+      const hold = addBox({ x: x0 + 13, z: z0, th: Math.PI / 2, hw: 2.3, hl: 4.2, y: groundH(x0 + 13, z0), pitch });
+      const end = addBox({ x: 364, z: z0, th: Math.PI / 2, hw: 2.3, hl: 4.2 });
+      return { start: { x: 268, z: z0, th: Math.PI / 2 }, steps: [
+        { type: 'ready', text: READY_TXT() },
+        { type: 'stop', box: hold, park: true, text: `Drive onto the slope and stop inside the yellow box. Hold the car there: ${SECURE_TXT()}.` },
+        { type: 'cp', x: x0 + up + top / 2, z: z0, r: 3, hill: true, text: tx(
+          'Hill start: hold the brake (S), select D, then move to the gas (W) and pull away without rolling back.',
+          'Hill start: clutch down (Shift), select 1st, press the gas (W), bring the clutch up — and release the parking brake (Space) as the car starts to pull. Do not roll back.') },
+        { type: 'stop', box: end, park: true, text: `Go down the far side under control — brake to stay below 20 km/h. Stop in the box, then ${SECURE_TXT()}.` },
+      ] };
+    } },
+  { id: 'city', title: '6 · City exam', desc: 'Follow the route through traffic: obey lights and signs, give way to pedestrians, signal every turn.', build() {
       const route = [[-2, 0], [-1, 0], [0, 0], [0, 1], [1, 1], [1, 0], [1, -1], [0, -1], [-1, -1], [-1, 0], [-2, 0]];
       const st = [{ type: 'ready', text: READY_TXT() + ' Watch for speed-limit signs, STOP signs and zebra crossings.' }];
       for (let k = 1; k < route.length - 1; k++) {
@@ -693,7 +771,7 @@ const LESSONS = [
 function startLesson(l) {
   lesson = l;
   scene.remove(lessonGroup); lessonGroup = new T.Group(); scene.add(lessonGroup);
-  cones = []; statics = [];
+  cones = []; statics = []; ramp = null; rollDist = 0; lastH = 0;
   const built = l.build();
   steps = built.steps; stepIdx = 0; startPose = built.start;
   Object.assign(car, built.start, { v: 0, steer: 0, gear: manual ? 'N' : 'P', engine: false, belt: false, signal: 0, clutch: 0, hand: manual, rpm: 0 });
@@ -713,7 +791,7 @@ function showStep() {
   $('stepNum').textContent = steps.length ? `Step ${Math.min(stepIdx + 1, steps.length)} / ${steps.length}` : 'Free drive';
   $('stepText').textContent = s ? s.text : 'Drive wherever you like. Obey the lights, keep to your side of the road and signal your turns.';
   ring.visible = !!s && s.type === 'cp';
-  if (ring.visible) { ring.position.set(s.x, 0, s.z); ring.children[0].scale.set(s.r, 1, s.r); }
+  if (ring.visible) { ring.position.set(s.x, groundH(s.x, s.z), s.z); ring.children[0].scale.set(s.r, 1, s.r); }
   activeBox = s && s.type === 'stop' ? s.box : null;
 }
 function stepDone(s) {
@@ -791,7 +869,7 @@ function togglePause() {
   if (state === 'run') { state = 'pause'; $('pause').hidden = false; }
   else if (state === 'pause') { state = 'run'; $('pause').hidden = true; }
 }
-const HOLD = { KeyW: 'gas', ArrowUp: 'gas', KeyS: 'brake', ArrowDown: 'brake', KeyA: 'left', ArrowLeft: 'left', KeyD: 'right', ArrowRight: 'right', ShiftLeft: 'clutch', ShiftRight: 'clutch' };
+const HOLD = { KeyW: 'gas', ArrowUp: 'gas', KeyS: 'brake', ArrowDown: 'brake', KeyA: 'left', ArrowLeft: 'left', KeyD: 'right', ArrowRight: 'right', ShiftLeft: 'clutch', ShiftRight: 'clutch', KeyH: 'horn' };
 window.addEventListener('keydown', e => {
   if (HOLD[e.code]) { keys[HOLD[e.code]] = true; e.preventDefault(); return; }
   if (e.code === 'Space') e.preventDefault();   // parking brake, not "click the focused button"
@@ -807,6 +885,7 @@ window.addEventListener('keydown', e => {
     case 'KeyQ': toggleSignal(1); break;
     case 'KeyE': toggleSignal(-1); break;
     case 'KeyC': camMode = (camMode + 1) % 3; break;
+    case 'KeyV': mirrorsOn = !mirrorsOn; break;
     case 'KeyR': startLesson(lesson); break;
     case 'Space': toggleHand(); break;
     case 'KeyN': case 'Digit0': setGear('N'); break;
@@ -818,7 +897,7 @@ window.addEventListener('keyup', e => { if (HOLD[e.code]) keys[HOLD[e.code]] = f
 window.addEventListener('blur', () => { for (const k in keys) keys[k] = false; });
 
 // ---------------------------------------------------------------- audio (tiny synth, no assets)
-let actx = null, engOsc = null, engGain = null, muted = false;
+let actx = null, engOsc = null, engGain = null, hornGain = null, muted = false;
 function initAudio() {
   if (actx) return;
   try {
@@ -827,6 +906,8 @@ function initAudio() {
     const lp = actx.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.value = 420;
     engGain = actx.createGain(); engGain.gain.value = 0;
     engOsc.connect(lp).connect(engGain).connect(actx.destination); engOsc.start();
+    hornGain = actx.createGain(); hornGain.gain.value = 0; hornGain.connect(actx.destination);
+    for (const f of [415, 520]) { const o = actx.createOscillator(); o.type = 'square'; o.frequency.value = f; o.connect(hornGain); o.start(); }
   } catch (e) { actx = null; }
 }
 function beep(freq, dur) {
@@ -837,6 +918,7 @@ function beep(freq, dur) {
 }
 function updateAudio() {
   if (!actx) return;
+  hornGain.gain.setTargetAtTime(keys.horn && state === 'run' && !muted ? 0.05 : 0, actx.currentTime, 0.01);
   const on = car.engine && state === 'run' && !muted;
   engGain.gain.setTargetAtTime(on ? 0.035 + (keys.gas ? 0.025 : 0) : 0, actx.currentTime, 0.08);
   engOsc.frequency.setTargetAtTime(manual ? 30 + car.rpm / 38 : 48 + Math.abs(car.v) * 5.5 + (keys.gas ? 18 : 0), actx.currentTime, 0.1);
@@ -876,7 +958,8 @@ function updateCar(dt) {
     else if (car.gear === 'R') acc = -2.5 * (1 + car.v / 9);
     else if (clock - (lastPen._hint ?? -9) > 4) { lastPen._hint = clock; toast('Select D or R to move', 'info'); }
   } else if (!car.engine && keys.gas && clock - (lastPen._hint ?? -9) > 4) { lastPen._hint = clock; toast('Engine is off — press I', 'info'); }
-  car.v += acc * dt;
+  const slope = slopeAhead();
+  car.v += (acc - 9.81 * slope / Math.hypot(1, slope)) * dt;
   const dec = (0.35 + 0.0005 * vabs * vabs + (keys.brake ? 9 : 0) + (car.hand ? 12 : 0) + (car.gear === 'P' ? 20 : 0)) * dt;
   car.v = Math.abs(car.v) <= dec ? 0 : car.v - Math.sign(car.v) * dec;
 
@@ -901,6 +984,16 @@ function updateCar(dt) {
     const hard = Math.abs(car.v) > 0.6;
     car.x = px; car.z = pz; car.th = pth; car.v = 0;
     if (hard) penalize(crash, crash === 'Hit a pedestrian' ? 60 : 20, 2.5);
+  }
+  if (ramp) {
+    const hNow = groundH(car.x, car.z);
+    if (lastH > 0.5 && hNow === 0) penalize('Drove off the ramp', 10, 2);
+    lastH = hNow;
+    const s = steps[stepIdx];
+    if (s && s.hill) {   // hill start: rolling back more than about half a metre is a fault
+      if (car.v < -0.05) rollDist -= car.v * dt; else if (car.v > 0.3) rollDist = 0;
+      if (rollDist > 0.5) { penalize('Rolled back on the hill', 10, 3); rollDist = 0; }
+    }
   }
   for (const c of cones) {
     if (c.hit) continue;
@@ -968,7 +1061,7 @@ function checkRules(dt) {
 // ---------------------------------------------------------------- camera
 const camTarget = new T.Vector3();
 function updateCamera(dt) {
-  const fx = Math.sin(car.th), fz = Math.cos(car.th);
+  const fx = Math.sin(car.th), fz = Math.cos(car.th), gh = groundH(car.x, car.z);
   camera.up.set(0, 1, 0);
   if (state === 'menu') {
     const a = clock * 0.05;
@@ -976,19 +1069,19 @@ function updateCamera(dt) {
     camTarget.set(0, 0, 0);
   } else if (camMode === 1) {
     const ox = side * 0.38;   // driver sits on the side nearest the road centre
-    camera.position.set(car.x + fz * ox + fx * 0.05, 1.27, car.z - fx * ox + fz * 0.05);
-    camera.lookAt(camera.position.x + fx * 10, 1.1, camera.position.z + fz * 10);
+    camera.position.set(car.x + fz * ox + fx * 0.05, 1.27 + gh, car.z - fx * ox + fz * 0.05);
+    camera.lookAt(camera.position.x + fx * 10, 1.1 + gh + slopeAhead() * 10, camera.position.z + fz * 10);
     camTarget.set(car.x, 0, car.z);
   } else if (camMode === 2) {
     camera.up.set(fx, 0, fz);
-    camera.position.set(car.x, 30, car.z); camera.lookAt(car.x, 0, car.z);
+    camera.position.set(car.x, 30 + gh, car.z); camera.lookAt(car.x, 0, car.z);
     camTarget.set(car.x, 0, car.z);
   } else {
     const k = 1 - Math.exp(-6 * dt);
     camera.position.x += (car.x - fx * 8 - camera.position.x) * k;
     camera.position.z += (car.z - fz * 8 - camera.position.z) * k;
-    camera.position.y += (3.3 - camera.position.y) * k;
-    camera.lookAt(car.x + fx * 3, 1.2, car.z + fz * 3);
+    camera.position.y += (3.3 + gh - camera.position.y) * k;
+    camera.lookAt(car.x + fx * 3, 1.2 + gh, car.z + fz * 3);
     camTarget.set(car.x, 0, car.z);
   }
   sun.position.set(camTarget.x + 55, 100, camTarget.z + 35);
@@ -1067,7 +1160,8 @@ function frame(now) {
       lastBlink = blinkOn;
       updateHud(limit, blinkOn);
     }
-    playerMesh.position.set(car.x, 0, car.z); playerMesh.rotation.y = car.th;
+    playerMesh.position.set(car.x, groundH(car.x, car.z), car.z);
+    playerMesh.rotation.y = car.th; playerMesh.rotation.x = -Math.atan(slopeAhead());
     const u = playerMesh.userData;
     u.fw.forEach(p => { p.rotation.y = car.steer; });
     u.wheel.rotation.z = -car.steer * 4;
@@ -1076,6 +1170,14 @@ function frame(now) {
   }
   updateCamera(dt);
   renderer.render(scene, camera);
+  const showMirrors = mirrorsOn && camMode !== 2 && (state === 'run' || state === 'pause');
+  document.body.classList.toggle('mirrors', showMirrors);
+  if (showMirrors) {
+    renderer.shadowMap.autoUpdate = false;   // reuse the shadows from the main view
+    for (const m of mirrors) { m.quad.visible = m.frame.visible = m.show; if (m.show) { renderer.setRenderTarget(m.rt); renderer.render(scene, m.cam); } }
+    renderer.setRenderTarget(null); renderer.shadowMap.autoUpdate = true;
+    renderer.autoClear = false; renderer.render(overlay, overlayCam); renderer.autoClear = true;
+  }
 }
 
 // ---------------------------------------------------------------- UI wiring
@@ -1096,7 +1198,7 @@ $('cam').onclick = () => { camMode = (camMode + 1) % 3; };
 $('pauseBtn').onclick = togglePause; $('resume').onclick = togglePause;
 $('restart').onclick = $('retry').onclick = () => startLesson(lesson);
 $('toMenu').onclick = $('resMenu').onclick = toMenu;
-for (const p of document.querySelectorAll('.pad')) {
+for (const p of document.querySelectorAll('.pad, .hold')) {
   const k = p.dataset.key, set = v => e => { keys[k] = v; e.preventDefault(); };
   p.addEventListener('pointerdown', set(true)); p.addEventListener('pointerup', set(false));
   p.addEventListener('pointerleave', set(false)); p.addEventListener('pointercancel', set(false));
