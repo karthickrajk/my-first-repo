@@ -240,5 +240,6 @@ window.LANG_TA = {
  "Force feedback works only in the Windows app (DriveReady.exe).": "ஃபோர்ஸ் ஃபீட்பேக் Windows செயலியில் (DriveReady.exe) மட்டுமே இயங்கும்.",
  "Checking for a force feedback wheel…": "ஃபோர்ஸ் ஃபீட்பேக் வீலைத் தேடுகிறது…",
  "Force feedback wheel: {0}": "ஃபோர்ஸ் ஃபீட்பேக் வீல்: {0}",
- "No force feedback wheel found. Plug it in; the app keeps looking.": "ஃபோர்ஸ் ஃபீட்பேக் வீல் கிடைக்கவில்லை. இணைக்கவும்; செயலி தொடர்ந்து தேடும்."
+ "No force feedback wheel found. Plug it in; the app keeps looking.": "ஃபோர்ஸ் ஃபீட்பேக் வீல் கிடைக்கவில்லை. இணைக்கவும்; செயலி தொடர்ந்து தேடும்.",
+ "Hit a two-wheeler": "இருசக்கர வாகனத்தில் மோதல்"
 };

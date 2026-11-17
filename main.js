@@ -267,6 +267,85 @@ function setCarLamps(mesh, braking, signal, blinkOn) {
   u.sigR.color.setHex(signal === -1 && blinkOn ? 0xffa200 : 0x553300);
 }
 
+// ---------------------------------------------------------------- Indian traffic: two-wheelers, autos and buses
+// hw / hl are half width / half length (collisions, following distance); lane is the offset from the road's
+// centre line (two-wheelers ride nearer the kerb); share is how much of the traffic each kind makes up.
+const KINDS = {
+  car: { hw: CW, hl: CL, lane: LANE, cruise: [9, 12.5], acc: 2.4, share: 0.42 },
+  bike: { hw: 0.4, hl: 1.0, lane: LANE + 1.5, cruise: [8.5, 13], acc: 3.2, share: 0.33 },
+  auto: { hw: 0.75, hl: 1.45, lane: LANE + 0.7, cruise: [6, 8.5], acc: 1.7, share: 0.17 },
+  bus: { hw: 1.25, hl: 5.4, lane: LANE, cruise: [7, 9.5], acc: 1.1, share: 0.08, max: 3 },
+};
+function lampSet(g, front, back, y, wide, brake, sigL, sigR) {   // head, tail and indicator lamps
+  for (const sx of wide ? [1, -1] : [0]) {
+    const h = new T.Mesh(GEO.lamp, MAT.head); h.position.set(sx * wide * 0.6, y, front);
+    const t = new T.Mesh(GEO.lamp, brake); t.position.set(sx * wide * 0.6, y + 0.04, back);
+    g.add(h, t);
+  }
+  const iw = Math.max(0.35, wide || 0.35);
+  for (const sx of [1, -1]) for (const z of [front - 0.01, back + 0.01]) {
+    const b = new T.Mesh(GEO.blink, sx > 0 ? sigL : sigR); b.position.set(sx * iw, y, z); g.add(b);
+  }
+}
+function wheelAt(g, x, y, z, r, w) {
+  const m = new T.Mesh(new T.CylinderGeometry(r, r, w, 14), MAT.tyre); m.rotation.z = Math.PI / 2; m.position.set(x, y, z); g.add(m);
+}
+function makeBike(color) {
+  const g = new T.Group(), paint = lam(color);
+  const body = new T.Mesh(new T.BoxGeometry(0.32, 0.42, 1.25), paint); body.position.set(0, 0.62, 0); body.castShadow = true;
+  const tank = new T.Mesh(new T.BoxGeometry(0.36, 0.22, 0.5), paint); tank.position.set(0, 0.88, 0.25);
+  const seat = new T.Mesh(new T.BoxGeometry(0.3, 0.1, 0.7), MAT.dark); seat.position.set(0, 0.88, -0.32);
+  const bar = new T.Mesh(new T.BoxGeometry(0.7, 0.05, 0.05), MAT.dark); bar.position.set(0, 1.08, 0.55);
+  g.add(body, tank, seat, bar);
+  wheelAt(g, 0, 0.32, 0.72, 0.32, 0.12); wheelAt(g, 0, 0.32, -0.72, 0.32, 0.14);
+  // rider with helmet
+  const shirts = [0x3b6fb6, 0xf2f2f2, 0x7a3b3b, 0x2f6b4f, 0xe0a422];
+  const torso = new T.Mesh(new T.BoxGeometry(0.44, 0.6, 0.28), lam(shirts[Math.floor(Math.random() * shirts.length)]));
+  torso.position.set(0, 1.28, -0.2); torso.rotation.x = 0.25; torso.castShadow = true;
+  const helmet = new T.Mesh(new T.SphereGeometry(0.17, 10, 8), lam([0x111111, 0xc81e1e, 0xf2f2f2, 0x1e4fc8][Math.floor(Math.random() * 4)]));
+  helmet.position.set(0, 1.72, -0.08);
+  const legs = new T.Mesh(new T.BoxGeometry(0.42, 0.18, 0.6), lam(0x2b3350)); legs.position.set(0, 0.95, -0.05);
+  g.add(torso, helmet, legs);
+  const brake = basic(0x550000), sigL = basic(0x553300), sigR = basic(0x553300);
+  lampSet(g, 0.95, -0.95, 0.8, 0, brake, sigL, sigR);
+  g.userData = { brake, sigL, sigR, fw: [] };
+  return g;
+}
+function makeAuto() {   // three-wheeler: yellow body, black canopy, one front wheel
+  const g = new T.Group(), yellow = lam(0xf2c21b), black = lam(0x1c1d20);
+  const base = new T.Mesh(new T.BoxGeometry(1.35, 0.55, 2.7), yellow); base.position.set(0, 0.62, -0.05); base.castShadow = true;
+  const nose = new T.Mesh(new T.BoxGeometry(0.7, 0.9, 0.5), yellow); nose.position.set(0, 0.85, 1.2);
+  const canopy = new T.Mesh(new T.BoxGeometry(1.42, 0.12, 2.3), black); canopy.position.set(0, 1.9, -0.15); canopy.castShadow = true;
+  const back = new T.Mesh(new T.BoxGeometry(1.4, 1.0, 0.1), black); back.position.set(0, 1.4, -1.28);
+  const screen = new T.Mesh(new T.BoxGeometry(1.2, 0.75, 0.05), MAT.glass); screen.position.set(0, 1.5, 0.95);
+  g.add(base, nose, canopy, back, screen);
+  for (const sx of [1, -1]) { const post = new T.Mesh(new T.BoxGeometry(0.06, 0.95, 0.06), black); post.position.set(sx * 0.66, 1.4, 0.92); g.add(post); }
+  wheelAt(g, 0, 0.26, 1.15, 0.26, 0.16); wheelAt(g, 0.62, 0.26, -0.85, 0.26, 0.16); wheelAt(g, -0.62, 0.26, -0.85, 0.26, 0.16);
+  const brake = basic(0x550000), sigL = basic(0x553300), sigR = basic(0x553300);
+  lampSet(g, 1.46, -1.42, 0.85, 0.5, brake, sigL, sigR);
+  g.userData = { brake, sigL, sigR, fw: [] };
+  return g;
+}
+function makeBus(color) {
+  const g = new T.Group(), paint = lam(color);
+  const body = new T.Mesh(new T.BoxGeometry(2.5, 2.4, 10.8), paint); body.position.set(0, 1.75, 0); body.castShadow = true;
+  const band = new T.Mesh(new T.BoxGeometry(2.54, 0.9, 10.4), MAT.glass); band.position.set(0, 2.25, -0.1);
+  const front = new T.Mesh(new T.BoxGeometry(2.3, 1.1, 0.05), MAT.glass); front.position.set(0, 2.15, 5.42);
+  const stripe = new T.Mesh(new T.BoxGeometry(2.54, 0.25, 10.82), lam(0xf2f2f2)); stripe.position.set(0, 1.25, 0);
+  const roof = new T.Mesh(new T.BoxGeometry(2.4, 0.12, 10.6), lam(0xdedede)); roof.position.set(0, 3.0, 0);
+  g.add(body, band, front, stripe, roof);
+  for (const z of [3.6, -2.6, -3.9]) for (const sx of [1, -1]) wheelAt(g, sx * 1.1, 0.5, z, 0.5, 0.3);
+  const brake = basic(0x550000), sigL = basic(0x553300), sigR = basic(0x553300);
+  lampSet(g, 5.42, -5.42, 0.9, 1.0, brake, sigL, sigR);
+  g.userData = { brake, sigL, sigR, fw: [] };
+  return g;
+}
+function pickKind(counts) {
+  let r = Math.random();
+  for (const [k, v] of Object.entries(KINDS)) { if (r < v.share && !(v.max && (counts[k] || 0) >= v.max)) return k; r -= v.share; }
+  return 'car';
+}
+
 // ---------------------------------------------------------------- world
 function tree(x, z, s) {
   const t = new T.Mesh(GEO.trunk, MAT.trunk); t.position.set(x, 1.2, z);
@@ -436,7 +515,7 @@ function setSegment(c, a, b) {
 function aiPose(c) {
   if (c.mode === 'seg') {
     const o = W / 2 + c.s;
-    c.x = c.a.x + c.d[0] * o + c.l[0] * LANE; c.z = c.a.z + c.d[1] * o + c.l[1] * LANE;
+    c.x = c.a.x + c.d[0] * o + c.l[0] * c.lane; c.z = c.a.z + c.d[1] * o + c.l[1] * c.lane;
     c.th = Math.atan2(c.d[0], c.d[1]);
   } else {
     const t = c.t, u = 1 - t, [p0, p1, p2] = c.curve;
@@ -451,27 +530,32 @@ function spawnTraffic(count) {
   for (const n of nodes.values()) n.claim = null;
   const all = [...nodes.values()];
   const colors = [0x2f6fd3, 0xf0f0f0, 0x2b2f36, 0x9aa3ad, 0x2e9c5a, 0xe0a422, 0x7b4bc4, 0xc9d2da];
+  const busColors = [0xb3262a, 0x2a5aa8, 0x3c8a4a, 0xd9822b], counts = {};
   let guard = 0;
   while (traffic.length < count && guard++ < 500) {
     const a = all[Math.floor(Math.random() * all.length)];
     const b = nodeAt(a, a.nb[Math.floor(Math.random() * a.nb.length)]);
-    const c = { v: 0, cruise: 9 + Math.random() * 3.5, blocked: 0, ghost: 0, hold: 0 };
+    const kind = pickKind(counts), K = KINDS[kind];
+    const c = { kind, hw: K.hw, hl: K.hl, lane: K.lane, acc: K.acc, v: 0, cruise: K.cruise[0] + Math.random() * (K.cruise[1] - K.cruise[0]), blocked: 0, ghost: 0, hold: 0 };
     setSegment(c, a, b); c.s = Math.random() * (S - W - 6); aiPose(c);
     if (startPose && Math.hypot(c.x - startPose.x, c.z - startPose.z) < 45) continue;
-    if (traffic.some(o => Math.hypot(o.x - c.x, o.z - c.z) < 14)) continue;
-    c.mesh = makeCar(colors[traffic.length % colors.length]); scene.add(c.mesh);
+    if (traffic.some(o => Math.hypot(o.x - c.x, o.z - c.z) < 10 + c.hl + o.hl)) continue;
+    c.mesh = kind === 'bike' ? makeBike(colors[traffic.length % colors.length]) : kind === 'auto' ? makeAuto()
+      : kind === 'bus' ? makeBus(busColors[(counts.bus || 0) % busColors.length]) : makeCar(colors[traffic.length % colors.length]);
+    scene.add(c.mesh); counts[kind] = (counts[kind] || 0) + 1;
     traffic.push(c);
   }
 }
 function updateTraffic(dt, blinkOn) {
-  const segLen = S - W, stopS = segLen - 3.2;
+  const segLen = S - W;
   for (const c of traffic) {
+    const stopS = segLen - 1.1 - c.hl;   // front bumper just behind the stop line
     let vmax = c.cruise, braking = false;
     if (c.hold > 0) { c.hold -= dt; vmax = 0; }
     if (c.mode === 'seg') {
       if (c.turn && c.s > segLen - 18) vmax = Math.min(vmax, 5);
       if (c.slow) vmax = Math.min(vmax, 7.6);
-      if (c.cw && c.cw.busy && c.s < c.sCw - 3) vmax = Math.min(vmax, Math.sqrt(2 * 3 * Math.max(0, c.sCw - 5.5 - c.s)));
+      if (c.cw && c.cw.busy && c.s < c.sCw - 3) vmax = Math.min(vmax, Math.sqrt(2 * 3 * Math.max(0, c.sCw - 3.4 - c.hl - c.s)));
       if (c.b.stop && c.b.claim !== c) {   // all-way stop: halt, wait a second, go when the junction is free
         const dist = stopS - c.s;
         vmax = Math.min(vmax, Math.sqrt(2 * 3 * Math.max(0, dist)));
@@ -486,16 +570,17 @@ function updateTraffic(dt, blinkOn) {
         const dist = stopS - c.s;
         if (st === 'r' || (st === 'y' && !(dist < 7 && c.v > 4))) vmax = Math.min(vmax, Math.sqrt(2 * 3 * Math.max(0, dist)));
       }
-    } else if (c.turn) vmax = Math.min(vmax, 5);
+    } else if (c.turn) vmax = Math.min(vmax, c.kind === 'bus' ? 3.5 : 5);
     // keep distance to whatever is ahead
     const fx = Math.sin(c.th), fz = Math.cos(c.th);
     let blockedByAI = false;
-    const look = 7 + c.v * 1.5;
+    const look = 7 + c.v * 1.5 + c.hl;
     const check = (o, isAI) => {
       const rx = o.x - c.x, rz = o.z - c.z, lz = rx * fx + rz * fz, lx = rx * fz - rz * fx;
-      if (lz > 0.5 && lz < look && Math.abs(lx) < 2) {
+      const ohw = o.hw || CW, ohl = o.hl || CL;
+      if (lz > 0.5 && lz < look + ohl && Math.abs(lx) < c.hw + ohw + 0.3) {
         if (isAI && c.ghost > 0) return;
-        vmax = Math.min(vmax, Math.sqrt(2 * 3 * Math.max(0, lz - 5.4)));
+        vmax = Math.min(vmax, Math.sqrt(2 * 3 * Math.max(0, lz - c.hl - ohl - 1.2)));
         if (isAI) blockedByAI = true;
       }
     };
@@ -504,16 +589,16 @@ function updateTraffic(dt, blinkOn) {
     if (blockedByAI && c.v < 0.2) { c.blocked += dt; if (c.blocked > 8) { c.ghost = 4; c.blocked = 0; } } else c.blocked = 0;
     if (c.ghost > 0) c.ghost -= dt;
 
-    if (c.v < vmax) c.v = Math.min(vmax, c.v + 2.4 * dt);
+    if (c.v < vmax) c.v = Math.min(vmax, c.v + c.acc * dt);
     else { braking = c.v > vmax + 0.3; c.v = Math.max(vmax, c.v - 6.5 * dt); }
 
     if (c.mode === 'seg') {
       c.s += c.v * dt;
       if (c.s >= segLen) {
         const b = c.b, d = c.d, l = c.l, d2 = [c.next.i - b.i, c.next.j - b.j], l2 = laneVec(d2);
-        const p0 = [b.x - d[0] * W / 2 + l[0] * LANE, b.z - d[1] * W / 2 + l[1] * LANE];
-        const p2 = [b.x + d2[0] * W / 2 + l2[0] * LANE, b.z + d2[1] * W / 2 + l2[1] * LANE];
-        const p1 = c.turn ? [b.x + (l[0] + l2[0]) * LANE, b.z + (l[1] + l2[1]) * LANE] : [(p0[0] + p2[0]) / 2, (p0[1] + p2[1]) / 2];
+        const p0 = [b.x - d[0] * W / 2 + l[0] * c.lane, b.z - d[1] * W / 2 + l[1] * c.lane];
+        const p2 = [b.x + d2[0] * W / 2 + l2[0] * c.lane, b.z + d2[1] * W / 2 + l2[1] * c.lane];
+        const p1 = c.turn ? [b.x + (l[0] + l2[0]) * c.lane, b.z + (l[1] + l2[1]) * c.lane] : [(p0[0] + p2[0]) / 2, (p0[1] + p2[1]) / 2];
         c.curve = [p0, p1, p2];
         c.curveLen = c.turn ? (Math.hypot(p1[0] - p0[0], p1[1] - p0[1]) + Math.hypot(p2[0] - p1[0], p2[1] - p1[1])) * 0.82 : W;
         c.mode = 'turn'; c.t = 0;
@@ -589,7 +674,7 @@ function updatePeds(dt) {
     }
     if (step) for (const v of vehicles) {   // never walk into a vehicle; walking away from one is fine
       const [lx, lz] = toLocal(v, nx, nz);
-      if (Math.abs(lx) < CW + 0.7 && Math.abs(lz) < CL + 0.9 && Math.hypot(nx - v.x, nz - v.z) < Math.hypot(p.x - v.x, p.z - v.z)) { step = false; break; }
+      if (Math.abs(lx) < (v.hw || CW) + 0.7 && Math.abs(lz) < (v.hl || CL) + 0.9 && Math.hypot(nx - v.x, nz - v.z) < Math.hypot(p.x - v.x, p.z - v.z)) { step = false; break; }
     }
     if (step) {
       p.th = Math.atan2(nx - p.x, nz - p.z); p.x = nx; p.z = nz; p.phase += dt * p.speed * 5.5;
@@ -611,7 +696,7 @@ function obbOverlap(a, b) {
   const ax = [[Math.sin(a.th), Math.cos(a.th)], [Math.cos(a.th), -Math.sin(a.th)], [Math.sin(b.th), Math.cos(b.th)], [Math.cos(b.th), -Math.sin(b.th)]];
   for (const n of ax) {
     const dot = (v) => Math.abs(v[0] * n[0] + v[1] * n[1]);
-    const ra = CL * dot(ax[0]) + CW * dot(ax[1]), rb = CL * dot(ax[2]) + CW * dot(ax[3]);
+    const ra = (a.hl || CL) * dot(ax[0]) + (a.hw || CW) * dot(ax[1]), rb = (b.hl || CL) * dot(ax[2]) + (b.hw || CW) * dot(ax[3]);
     if (Math.abs(dx * n[0] + dz * n[1]) > ra + rb) return false;
   }
   return true;
@@ -876,7 +961,7 @@ function sendState(now) {
     kmh: Math.round(Math.abs(car.v) * 3.6), limit: curLimit, gear: car.gear, engine: car.engine, belt: car.belt, hand: car.hand, signal: car.signal,
     gas: r(inp.gas), brake: r(inp.brake), clutch: r(car.clutch), score: Math.max(0, score), t: r(Math.max(0, clock - lessonT0)),
     car: [r(car.x), r(car.z), Math.round(car.th * 100) / 100], target: tgt ? [r(tgt.x), r(tgt.z)] : null,
-    traffic: traffic.map(c => [r(c.x), r(c.z)]), peds: peds.map(p => [r(p.x), r(p.z)]), log: evLog.slice(-80) });
+    traffic: traffic.map(c => [r(c.x), r(c.z), Math.round(c.th * 100) / 100, c.kind]), peds: peds.map(p => [r(p.x), r(p.z)]), log: evLog.slice(-80) });
 }
 function updateEstop() {
   if (!estop || state !== 'run') return;
@@ -1290,7 +1375,7 @@ function updateCar(dt) {
     if (Math.hypot(car.x - nx, car.z - nz) < 1.3) { crash = 'Collision with a building'; break; }
   }
   if (!crash) for (const o of statics) if (obbOverlap(car, o)) { crash = 'Hit a parked car'; break; }
-  if (!crash) for (const o of traffic) if (Math.hypot(o.x - car.x, o.z - car.z) < 5 && obbOverlap(car, o)) { crash = 'Collision with a vehicle'; o.hold = 2; break; }
+  if (!crash) for (const o of traffic) if (Math.hypot(o.x - car.x, o.z - car.z) < 3 + o.hl && obbOverlap(car, o)) { crash = o.kind === 'bike' ? 'Hit a two-wheeler' : 'Collision with a vehicle'; o.hold = 2; break; }
   if (!crash && Math.abs(car.v) > 0.5) for (const p of peds) {
     const [lx, lz] = toLocal(car, p.x, p.z);
     if (Math.abs(lx) < CW + 0.25 && Math.abs(lz) < CL + 0.25) { crash = 'Hit a pedestrian'; break; }
@@ -1471,7 +1556,11 @@ function updateHud(limit, blinkOn) {
   g.stroke();
   g.fillStyle = '#fff'; for (const cw of crosswalks) g.fillRect(X(cw.x) - (cw.ax === 'x' ? 2 : 5), Z(cw.z) - (cw.ax === 'x' ? 5 : 2), cw.ax === 'x' ? 4 : 10, cw.ax === 'x' ? 10 : 4);
   g.fillStyle = '#7dffa8'; for (const p of peds) if (p.walking) g.fillRect(X(p.x) - 2, Z(p.z) - 2, 4, 4);
-  g.fillStyle = '#dfe6f0'; for (const c of traffic) g.fillRect(X(c.x) - 3, Z(c.z) - 3, 6, 6);
+  for (const c of traffic) {
+    const r = c.kind === 'bus' ? 5 : c.kind === 'bike' ? 2 : 3;
+    g.fillStyle = c.kind === 'bus' ? '#ff9d4d' : c.kind === 'auto' ? '#ffe14d' : c.kind === 'bike' ? '#9fd7ff' : '#dfe6f0';
+    g.fillRect(X(c.x) - r, Z(c.z) - r, 2 * r, 2 * r);
+  }
   if (tgt) { g.fillStyle = '#ffc530'; g.beginPath(); g.arc(clamp(X(tgt.x), 8, N - 8), clamp(Z(tgt.z), 8, N - 8), 8, 0, 7); g.fill(); }
   g.save(); g.translate(cx, cy); g.rotate(-car.th + Math.PI);
   g.fillStyle = '#ff4b3e'; g.beginPath(); g.moveTo(0, -13); g.lineTo(8, 9); g.lineTo(0, 4); g.lineTo(-8, 9); g.closePath(); g.fill();

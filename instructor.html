@@ -245,8 +245,12 @@
       c.ax === 'x' ? g.fillRect(X(c.x - 1.5), Z(c.z + u - 0.27), 3 * sc, 0.55 * sc) : g.fillRect(X(c.x + u - 0.27), Z(c.z - 1.5), 0.55 * sc, 3 * sc);
     g.fillStyle = '#c8102e';
     for (const k of world.stops) { const [i, j] = k.split(',').map(Number); g.beginPath(); g.arc(X(i * S), Z(j * S), Math.max(4, 1.6 * sc), 0, 7); g.fill(); }
-    g.fillStyle = '#dfe6f0';
-    for (const [x, z] of st.traffic) g.fillRect(X(x) - Math.max(2.5, sc), Z(z) - Math.max(2.5, sc), Math.max(5, 2 * sc), Math.max(5, 2 * sc));
+    const SIZE = { car: [1.9, 4.2, '#dfe6f0'], bike: [0.8, 2, '#9fd7ff'], auto: [1.5, 2.9, '#ffe14d'], bus: [2.5, 10.8, '#ff9d4d'] };
+    for (const [x, z, th, kind] of st.traffic) {   // each vehicle drawn to scale, turned the way it faces
+      const [w2, l2, col] = SIZE[kind] || SIZE.car, k = Math.max(sc, 1.2);
+      g.save(); g.translate(X(x), Z(z)); g.rotate(-(th || 0)); g.fillStyle = col;
+      g.fillRect(-w2 * k / 2, -l2 * k / 2, w2 * k, l2 * k); g.restore();
+    }
     g.fillStyle = '#7dffa8';
     for (const [x, z] of st.peds) { g.beginPath(); g.arc(X(x), Z(z), Math.max(2, 0.5 * sc), 0, 7); g.fill(); }
     if (st.target) { g.strokeStyle = '#ffc530'; g.lineWidth = 3; g.beginPath(); g.arc(X(st.target[0]), Z(st.target[1]), Math.max(7, 3 * sc), 0, 7); g.stroke(); }

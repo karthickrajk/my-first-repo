@@ -125,6 +125,10 @@ A rear-view mirror and two wing mirrors are shown in the chase and cockpit
 cameras (`V` hides them). The horn (`H`) makes pedestrians waiting at a nearby
 crossing hold back.
 
+Traffic is a mix of cars, two-wheelers (riding nearer the kerb), yellow autos
+and buses, each with its own size, speed and acceleration. Hitting a
+two-wheeler is recorded separately.
+
 Pedestrians walk the pavements and cross at the zebra crossings. Road signs show
 the speed limit wherever it changes, mark the two all-way STOP junctions and warn
 of each crossing.
