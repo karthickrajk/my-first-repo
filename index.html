@@ -177,6 +177,15 @@
     <p class="sub" id="wheelDev"></p>
     <p class="sub" style="margin-top:-8px" data-tr>Click Set, then move that control on your device. Steering, accelerator and brake are needed; the rest are optional. Settings are saved for this device.</p>
     <div id="wheelRows"></div>
+    <div id="ffbBox" style="margin-top:14px">
+      <b data-tr>Force feedback</b>
+      <p class="sub" id="ffbNote" style="margin:4px 0 8px"></p>
+      <div class="row" id="ffbControls" style="margin-top:0">
+        <div class="seg" id="ffbSel"><button data-ffb="off" data-tr>Off</button><button data-ffb="light" data-tr>Light</button><button data-ffb="medium" data-tr>Medium</button><button data-ffb="strong" data-tr>Strong</button></div>
+        <button class="tog" id="ffbInv" data-tr>Reverse direction</button>
+        <button class="btn" id="ffbTest" data-tr>Test push</button>
+      </div>
+    </div>
     <div class="row"><button class="btn primary" id="wheelDone" data-tr>Done</button><button class="btn" id="wheelReset" data-tr>Reset</button></div>
   </div>
 </div>

@@ -230,5 +230,15 @@ window.LANG_TA = {
  "Keep left": "இடதுபுறம் செல்லுங்கள்",
  "Stop at the line": "கோட்டில் நிறுத்துங்கள்",
  "Watch the pedestrian": "பாதசாரியைக் கவனியுங்கள்",
- "Pull over and stop": "ஓரமாக நிறுத்துங்கள்"
+ "Pull over and stop": "ஓரமாக நிறுத்துங்கள்",
+ "Force feedback": "ஃபோர்ஸ் ஃபீட்பேக்",
+ "Light": "லேசான",
+ "Medium": "நடுத்தர",
+ "Strong": "வலுவான",
+ "Reverse direction": "திசையை மாற்று",
+ "Test push": "சோதனை அழுத்தம்",
+ "Force feedback works only in the Windows app (DriveReady.exe).": "ஃபோர்ஸ் ஃபீட்பேக் Windows செயலியில் (DriveReady.exe) மட்டுமே இயங்கும்.",
+ "Checking for a force feedback wheel…": "ஃபோர்ஸ் ஃபீட்பேக் வீலைத் தேடுகிறது…",
+ "Force feedback wheel: {0}": "ஃபோர்ஸ் ஃபீட்பேக் வீல்: {0}",
+ "No force feedback wheel found. Plug it in; the app keeps looking.": "ஃபோர்ஸ் ஃபீட்பேக் வீல் கிடைக்கவில்லை. இணைக்கவும்; செயலி தொடர்ந்து தேடும்."
 };

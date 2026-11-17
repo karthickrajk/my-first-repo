@@ -14,6 +14,20 @@ import webbrowser
 TITLE = "DriveReady - Driving School Simulator"
 
 
+class Api:
+    """Methods the game page can call as window.pywebview.api.<name>()."""
+
+    def __init__(self, fb):
+        self._fb = fb
+
+    def ffb_info(self):
+        return self._fb.info() if self._fb else {"available": False, "status": "not supported", "device": ""}
+
+    def ffb(self, values):
+        if self._fb:
+            self._fb.set(values)
+
+
 def resource_dir():
     # PyInstaller unpacks bundled files to sys._MEIPASS at runtime.
     return getattr(sys, "_MEIPASS", os.path.dirname(os.path.abspath(__file__)))
@@ -52,10 +66,19 @@ def main():
     url = f"http://127.0.0.1:{server.server_port}/index.html"
     try:
         import webview
-        webview.create_window(TITLE, url, width=1280, height=800, min_size=(900, 600))
-        webview.start()
     except Exception:
         run_in_browser(url)
+        server.shutdown()
+        return
+    try:
+        from ffb import ForceFeedback
+        fb = ForceFeedback()
+    except Exception:
+        fb = None   # force feedback is optional; the game runs without it
+    webview.create_window(TITLE, url, width=1280, height=800, min_size=(900, 600), js_api=Api(fb))
+    webview.start()
+    if fb:
+        fb.stop()   # stop the wheel's motor before exiting
     server.shutdown()
 
 

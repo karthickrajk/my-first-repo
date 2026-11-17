@@ -14,6 +14,23 @@ in `vendor/three.min.js`.)
 Every push to `master` publishes the game for free on GitHub Pages:
 https://karthickrajk.github.io/my-first-repo/
 
+## Force feedback (Windows app)
+
+In `DriveReady.exe`, force-feedback wheels (Logitech G29/G920/G923,
+Thrustmaster and other DirectInput wheels) get real steering feel:
+
+- heavy, resistant steering when parked or parking
+- the wheel pulls back to straight, more strongly the faster you drive
+- lighter steering in the rain
+- a rumble when you leave the road, and a jolt on collisions, cones and stalls
+
+Open **Steering wheel / pedals → Set up** to choose Off / Light / Medium /
+Strong, use **Test push** to check it, and **Reverse direction** if the wheel
+pushes the wrong way. Turn off the wheel's own centring spring in Logitech G
+HUB or the Thrustmaster Control Panel so it doesn't fight the game. Browsers
+cannot drive a wheel's motor, so this works only in the Windows app; it uses
+SDL2 (`pysdl2`) through `ffb.py`.
+
 ## Three monitors
 
 Choose **Screens: Three** on the menu, then stretch the game window across
@@ -137,4 +154,5 @@ dashboard buttons are tappable.
 - `main.js` — world, car physics, traffic AI, rules and lessons
 - `instructor.html` — the instructor screen
 - `lang-ta.js` — Tamil translations
+- `app.py`, `ffb.py` — Windows app launcher and force feedback
 - `vendor/three.min.js` — Three.js r170 (MIT licence, see `vendor/THREE-LICENSE`)

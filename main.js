@@ -1196,6 +1196,48 @@ function updateWheelLive(gp) {
 }
 function openWheel() { $('wheel').hidden = false; renderWheelUI(); }
 
+
+// ---------------------------------------------------------------- force feedback (Windows app only)
+// The page decides what the driver should feel; the launcher (ffb.py) plays it on the wheel's motor.
+// A browser has no way to do this, so in a browser these settings stay hidden.
+const FFB_LEVELS = { off: 0, light: 0.35, medium: 0.6, strong: 0.9 };
+let ffbLevel = 'medium', ffbInvert = false, ffbInfo = null, ffbSent = '', ffbLast = 0, offRoad = false;
+const ffbApi = () => window.pywebview && window.pywebview.api && window.pywebview.api.ffb ? window.pywebview.api : null;
+try { const l = localStorage.getItem('driveready.ffb'); if (FFB_LEVELS[l] !== undefined) ffbLevel = l; ffbInvert = localStorage.getItem('driveready.ffbInvert') === '1'; } catch (e) { /* storage unavailable */ }
+function ffbJolt(strength, dir) { const api = ffbApi(); if (api && ffbLevel !== 'off') api.ffb({ jolt: strength, dir: dir || (Math.random() < 0.5 ? -1 : 1) }); }
+function updateFfb() {
+  const api = ffbApi(); if (!api || clock - ffbLast < 0.05) return;
+  ffbLast = clock;
+  let spring = 0.3, damper = 0.15, rumble = 0;   // menu / paused: just hold the wheel straight
+  if (state === 'run') {
+    const sp = Math.min(1, Math.abs(car.v) / 16);                    // 0 parked .. 1 at about 58 km/h
+    spring = 0.1 + 0.6 * sp;                                          // pulls back to straight harder at speed
+    damper = 0.12 + 0.5 * (1 - sp);                                   // tyres scrub: heavy when parked or parking
+    if (wet()) spring *= 0.7;                                         // lighter steering on a wet road
+    if (offRoad) rumble = 0.4 * Math.min(1, Math.abs(car.v) / 5);
+    else if (car.engine && Math.abs(car.v) < 0.3) rumble = 0.04;      // idling engine
+  }
+  const v = { enabled: ffbLevel !== 'off', gain: FFB_LEVELS[ffbLevel], invert: ffbInvert, spring, damper, rumble };
+  const key = [v.enabled, v.gain, v.invert, spring.toFixed(2), damper.toFixed(2), rumble.toFixed(2)].join();
+  if (key !== ffbSent) { ffbSent = key; api.ffb(v); }
+}
+function refreshFfbInfo() {
+  const api = ffbApi();
+  if (!api) { ffbInfo = null; renderFfbUI(); return; }
+  api.ffb_info().then(i => { ffbInfo = i; renderFfbUI(); }).catch(() => { ffbInfo = null; renderFfbUI(); });
+}
+function renderFfbUI() {
+  const box = $('ffbBox'); if (!box) return;
+  const inApp = !!ffbApi();
+  $('ffbNote').textContent = !inApp ? tr('Force feedback works only in the Windows app (DriveReady.exe).')
+    : !ffbInfo ? tr('Checking for a force feedback wheel…')
+    : ffbInfo.available ? TL`Force feedback wheel: ${ffbInfo.device}` : tr('No force feedback wheel found. Plug it in; the app keeps looking.');
+  $('ffbControls').hidden = !inApp;
+  for (const b of $('ffbSel').children) b.classList.toggle('on', b.dataset.ffb === ffbLevel);
+  $('ffbInv').classList.toggle('on', ffbInvert);
+}
+window.addEventListener('pywebviewready', refreshFfbInfo);
+
 // ---------------------------------------------------------------- player update
 function updateCar(dt) {
   const px = car.x, pz = car.z, pth = car.th;
@@ -1215,7 +1257,7 @@ function updateCar(dt) {
     if (g && car.engine) {
       const dirn = car.gear === 'R' ? -1 : 1, vg = car.v * dirn;   // speed in the direction the gear drives
       if (car.clutch < 0.15 && vg < (inp.gas > 0.25 ? g.gasMin : g.idleMin)) {
-        car.engine = false; rpm = 0; beep(120, 0.3);
+        car.engine = false; rpm = 0; beep(120, 0.3); ffbJolt(0.45);
         toast(Math.abs(car.v) < 1 ? 'Engine stalled — use the clutch when stopping, and gas when moving off' : TL`Engine stalled — too slow for gear ${car.gear}`, 'info');
         if (steps.length) penalize('Stalled the engine', 5, 2);
       } else {
@@ -1256,7 +1298,7 @@ function updateCar(dt) {
   if (crash) {
     const hard = Math.abs(car.v) > 0.6;
     car.x = px; car.z = pz; car.th = pth; car.v = 0;
-    if (hard) penalize(crash, crash === 'Hit a pedestrian' ? 60 : 20, 2.5);
+    if (hard) { penalize(crash, crash === 'Hit a pedestrian' ? 60 : 20, 2.5); ffbJolt(Math.min(1, 0.5 + vabs / 10)); }
   }
   if (ramp) {
     const hNow = groundH(car.x, car.z);
@@ -1272,7 +1314,7 @@ function updateCar(dt) {
     if (c.hit) continue;
     const [lx, lz] = toLocal(car, c.x, c.z);
     if (Math.abs(lx) < CW + 0.2 && Math.abs(lz) < CL + 0.2) {
-      c.hit = true; c.mesh.rotation.z = 1.45; c.mesh.position.y = 0.2;
+      c.hit = true; c.mesh.rotation.z = 1.45; c.mesh.position.y = 0.2; ffbJolt(0.3, lx > 0 ? 1 : -1);
       penalize('Knocked over a cone', 5, 0);
     }
   }
@@ -1285,7 +1327,8 @@ function checkRules(dt) {
   const limit = curLimit;
   if (Math.abs(car.v) > 1.5 && !car.belt) penalize('Driving without a seatbelt', 10, 20);
   if (kmh > limit + 3 && clock - limitSince > 2.5) penalize('Speeding', 5, 4);   // short grace to slow down after a sign
-  if (!isDrivable(car.x + fx * 1.3, car.z + fz * 1.3) || !isDrivable(car.x - fx * 1.3, car.z - fz * 1.3))
+  offRoad = !isDrivable(car.x + fx * 1.3, car.z + fz * 1.3) || !isDrivable(car.x - fx * 1.3, car.z - fz * 1.3);
+  if (offRoad)
     penalize(inLot() ? 'Left the training area' : 'Left the roadway', 5, 3);
   if (inLot()) { curNode = null; wrongT = 0; return limit; }
 
@@ -1441,6 +1484,7 @@ function frame(now) {
   requestAnimationFrame(frame);
   const dt = Math.min(0.05, (now - last) / 1000); last = now;
   pollInput();
+  updateFfb();
   if (state !== 'pause' && state !== 'end') {
     clock += dt;
     const blinkOn = (clock * 2.6) % 1 < 0.5;
@@ -1505,6 +1549,7 @@ function applyLanguage() {   // (re)draw every fixed text in the chosen language
   }
   $('help').innerHTML = HELP.map(([k, what]) => `<div>${k} ${tr(what)}</div>`).join('');
   for (const o of $('langSel').children) o.classList.toggle('on', o.dataset.lang === lang);
+  renderFfbUI();
 }
 try { if (localStorage.getItem('driveready.lang') === 'ta') lang = 'ta'; } catch (e) { /* storage unavailable */ }
 for (const b of $('langSel').children) b.onclick = () => {
@@ -1513,7 +1558,19 @@ for (const b of $('langSel').children) b.onclick = () => {
   applyLanguage();
 };
 applyLanguage();
-$('wheelBtn').onclick = openWheel;
+$('wheelBtn').onclick = () => { openWheel(); refreshFfbInfo(); };
+for (const b of $('ffbSel').children) b.onclick = () => {
+  ffbLevel = b.dataset.ffb; ffbSent = '';
+  try { localStorage.setItem('driveready.ffb', ffbLevel); } catch (e) { /* storage unavailable */ }
+  renderFfbUI();
+};
+$('ffbInv').onclick = () => {
+  ffbInvert = !ffbInvert; ffbSent = '';
+  try { localStorage.setItem('driveready.ffbInvert', ffbInvert ? '1' : '0'); } catch (e) { /* storage unavailable */ }
+  renderFfbUI(); ffbJolt(0.5, 1);   // a test push so the instructor can check the direction
+};
+$('ffbTest').onclick = () => ffbJolt(0.6, 1);
+setInterval(() => { if (!$('wheel').hidden) refreshFfbInfo(); }, 2000);   // notices a wheel plugged in later
 $('instrBtn').onclick = openInstructor;
 try { triple = localStorage.getItem('driveready.triple') === '1'; } catch (e) { /* storage unavailable */ }
 for (const b of $('screenSel').children) b.onclick = () => {
