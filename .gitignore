@@ -1,4 +1,6 @@
 build/
 dist/
+site/
+.netlify/
 *.spec
 __pycache__/
