@@ -1,8 +1,9 @@
 # DriveReady — driving school simulator
 
-A 3D driving-school simulator that runs in the browser. Learn the controls on a
-training ground, practise parking, then take a city exam with AI traffic,
-traffic lights and an instructor who scores every mistake.
+A 3D LMV driving-school simulator that runs in the browser. Vertex-style
+modules cover RTO tracks (H / 8 / parking / ramp), city traffic, rain / night /
+fog, village roads, mountain tunnel and an NHAI highway — with an instructor
+screen that scores every mistake.
 
 ## Run it
 
@@ -90,17 +91,31 @@ messages and penalties are translated; the choice is remembered.
   the result is `dist\DriveReady.exe`.
 - **Run without building:** `pip install pywebview` then `python app.py`.
 
-## Lessons
+## Lessons (Vertex-style LMV modules)
+
+Grouped like commercial LMV simulator curricula (RTO tracks, city/traffic, weather, terrains):
 
 | Lesson | What you practise |
 | --- | --- |
-| 1 · First steps | Seatbelt, engine, gear selector, cone slalom, stopping in a box |
-| 2 · Parking | Parking in a free bay between parked cars |
-| 3 · "8" track | A figure of eight between cones, one loop each way |
-| 4 · "H" track | Forward through the H (leg, crossbar, far leg), then reverse all the way back |
-| 5 · Hill start | Stop on a slope, pull away uphill without rolling back, descend under control |
-| 6 · City exam | A set route through traffic: lights, STOP signs, 30 km/h zones, zebra crossings, turn signals |
-| Free drive | The whole city, no route — mistakes are still called out |
+| 1 · Pre-drive checks | Seatbelt, mirrors, indicators, horn, engine — cockpit checks before moving |
+| 2 · Hand & foot controls | Steering, pedals, gears, cone slalom, controlled stop |
+| 3 · Road signs | Speed limits, STOP and pedestrian signs on a short route |
+| 4 · Parking | Free bay between parked cars (RTO parking track) |
+| 5 · "8" track | Figure of eight between cones (RTO) |
+| 6 · "H" track | Forward through the H, then reverse back (RTO) |
+| 7 · Ramp / hill start | Stop on a slope, pull away without rolling back (RTO ramp) |
+| 8 · Traffic scenario | Dense urban traffic — buses, autos, two-wheelers |
+| 9 · City road scenario | Lights, STOP signs, 30 zones, zebra crossings, signals |
+| 10 · AI traffic lights | Junction timing — stop on red, go on green |
+| 11 · Realistic rain | Wet grip, longer braking |
+| 12 · Night scenario | Low-light city driving with headlights |
+| 13 · Realistic fog | Short sight distance, bigger gaps |
+| 14 · All time · all weather | Free practice; switch conditions from the instructor screen |
+| 15 · Village scenario | Rural roads, temple landmark, 30 km/h lanes |
+| 16 · Mountain & valley | Climbing bends with elevation |
+| 17 · Mountain tunnel | Dark tunnel drive with auto headlights |
+| 18 · NHAI highway | Multi-lane highway, 80 km/h, lane discipline |
+| Free drive | City, village, highway and mountain — mistakes still called out |
 
 You start with 100 points. Finish with 70 or more to pass; dropping to 40 fails
 the lesson on the spot.

@@ -225,18 +225,31 @@
     g.setTransform(dpr, 0, 0, dpr, 0, 0);
     g.fillStyle = '#2c4a2a'; g.fillRect(0, 0, w, h);
     if (!world || !st) { g.fillStyle = '#93a0b2'; g.font = '15px system-ui'; g.textAlign = 'center'; g.fillText(tr('Waiting for the game…'), w / 2, h / 2); return; }
-    const { G, S, W, LOT } = world, HALF = G * S;
-    // view: follow the car, or fit city and training ground
+    const { G, S, W, LOT, HWY, VILLAGE, mtn } = world, HALF = G * S;
+    // view: follow the car, or fit city + training ground + extended terrains
     let cx, cz, sc;
     if (follow) { cx = st.car[0]; cz = st.car[1]; sc = Math.min(w, h) / 150; }
-    else { const x0 = -HALF - 20, x1 = LOT.x1 + 10; cx = (x0 + x1) / 2; cz = 0; sc = Math.min(w / (x1 - x0), h / (2 * HALF + 40)); }
+    else {
+      const x0 = (VILLAGE ? VILLAGE.x0 : -HALF) - 20, x1 = LOT.x1 + 10;
+      const z0 = (HWY ? HWY.z - HWY.w / 2 : -HALF) - 20, z1 = (mtn && mtn.length ? mtn[mtn.length - 1][1] : HALF) + 20;
+      cx = (x0 + x1) / 2; cz = (z0 + z1) / 2; sc = Math.min(w / (x1 - x0), h / (z1 - z0)) * 0.92;
+    }
     const X = x => w / 2 + (x - cx) * sc, Z = z => h / 2 + (z - cz) * sc;
     g.fillStyle = '#3a3e45'; g.fillRect(X(LOT.x0), Z(LOT.z0), (LOT.x1 - LOT.x0) * sc, (LOT.z1 - LOT.z0) * sc);
+    if (HWY) { g.fillStyle = '#4a4e56'; g.fillRect(X(HWY.x0), Z(HWY.z - HWY.w / 2), (HWY.x1 - HWY.x0) * sc, HWY.w * sc); }
+    if (VILLAGE) { g.fillStyle = '#5a6a4a'; g.fillRect(X(VILLAGE.x0), Z(VILLAGE.z0), (VILLAGE.x1 - VILLAGE.x0) * sc, (VILLAGE.z1 - VILLAGE.z0) * sc); }
     g.fillStyle = '#b9b9b1';
     for (let i = -G; i < G; i++) for (let j = -G; j < G; j++) g.fillRect(X(i * S + W / 2), Z(j * S + W / 2), (S - W) * sc, (S - W) * sc);
     g.strokeStyle = '#4a4e56'; g.lineWidth = W * sc; g.beginPath();
     for (let k = -G; k <= G; k++) { g.moveTo(X(-HALF - W / 2), Z(k * S)); g.lineTo(X(HALF + W / 2), Z(k * S)); g.moveTo(X(k * S), Z(-HALF - W / 2)); g.lineTo(X(k * S), Z(HALF + W / 2)); }
+    if (HWY) { g.moveTo(X(0), Z(-HALF)); g.lineTo(X(0), Z(HWY.z)); }
+    if (VILLAGE) { g.moveTo(X(-HALF), Z(0)); g.lineTo(X(VILLAGE.x1), Z(0)); }
     g.stroke();
+    if (mtn && mtn.length) {
+      g.strokeStyle = '#8a8070'; g.lineWidth = Math.max(2, 4 * sc); g.beginPath();
+      mtn.forEach(([x, z], i) => i ? g.lineTo(X(x), Z(z)) : g.moveTo(X(x), Z(z)));
+      g.stroke();
+    }
     g.strokeStyle = 'rgba(242,194,48,.7)'; g.lineWidth = Math.max(1, 0.25 * sc); g.setLineDash([3 * sc, 3 * sc]); g.beginPath();
     for (let k = -G; k <= G; k++) { g.moveTo(X(-HALF), Z(k * S)); g.lineTo(X(HALF), Z(k * S)); g.moveTo(X(k * S), Z(-HALF)); g.lineTo(X(k * S), Z(HALF)); }
     g.stroke(); g.setLineDash([]);

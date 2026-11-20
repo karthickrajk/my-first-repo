@@ -31,6 +31,9 @@ const ZONE30 = new Set(['x:0,1', 'x:-1,1', 'x:-1,-1']);   // 30 km/h zones, each
 const STOP_NODES = new Set(['1,1', '-1,-1']);             // all-way STOP junctions (no lights)
 const CW_AT = 0.35;      // zebra position along its segment (fraction of S from the lower node)
 const PED_U = W / 2 + 1.5; // kerb-to-kerb half distance a pedestrian walks
+// Extended Vertex-style terrains beyond the city grid (HALF = G*S = 160)
+const HWY = { z: -280, x0: -180, x1: 360, w: 22 };         // NHAI dual carriageway (east–west)
+const VILLAGE = { x0: -380, x1: -200, z0: -100, z1: 100 }; // rural area west of the city
 
 // ---------------------------------------------------------------- renderer
 const renderer = new T.WebGLRenderer({ canvas: $('view'), antialias: true, logarithmicDepthBuffer: true });
@@ -103,14 +106,36 @@ let curLimit = 50, limitSince = 0, stopNode = null, stopTime = -99;
 const car = { x: 0, z: 0, th: 0, v: 0, steer: 0, gear: 'P', engine: false, belt: false, signal: 0, clutch: 0, hand: false, rpm: 0 };
 const keys = { gas: false, brake: false, left: false, right: false, clutch: false, horn: false };
 let ramp = null, rollDist = 0, lastH = 0;   // hill-start ramp of the current lesson, if any
+let mtnRoad = null;                        // mountain path built once with the world: { pts, halfW, tunnel }
+let lessonFlags = {};                      // per-lesson checklist flags (mirrors, signals, horn…)
 function groundH(x, z) {
-  if (!ramp || Math.abs(z - ramp.z) > ramp.hw) return 0;
-  const u = x - ramp.x;
-  if (u <= 0 || u >= ramp.len) return 0;
-  return u < ramp.up ? u / ramp.up * ramp.h : u < ramp.up + ramp.top ? ramp.h : (ramp.len - u) / ramp.up * ramp.h;
+  let h = 0;
+  if (ramp && Math.abs(z - ramp.z) <= ramp.hw) {
+    const u = x - ramp.x;
+    if (u > 0 && u < ramp.len)
+      h = u < ramp.up ? u / ramp.up * ramp.h : u < ramp.up + ramp.top ? ramp.h : (ramp.len - u) / ramp.up * ramp.h;
+  }
+  if (mtnRoad) {
+    const n = nearestMtn(x, z);
+    if (n && n.dist < mtnRoad.halfW) h = Math.max(h, n.h);
+  }
+  return h;
+}
+function nearestMtn(x, z) {   // closest sample on the mountain centreline
+  if (!mtnRoad) return null;
+  let best = null;
+  for (const p of mtnRoad.pts) {
+    const d = Math.hypot(x - p.x, z - p.z);
+    if (!best || d < best.dist) best = { dist: d, h: p.h, x: p.x, z: p.z, i: p.i, tun: p.tun };
+  }
+  return best;
+}
+function inTunnel() {
+  const n = nearestMtn(car.x, car.z);
+  return !!(n && n.tun && n.dist < (mtnRoad ? mtnRoad.halfW : 0));
 }
 function slopeAhead() {   // rise per metre in the direction the car points
-  if (!ramp) return 0;
+  if (!ramp && !mtnRoad) return 0;
   const fx = Math.sin(car.th) * 0.6, fz = Math.cos(car.th) * 0.6;
   return (groundH(car.x + fx, car.z + fz) - groundH(car.x - fx, car.z - fz)) / 1.2;
 }
@@ -212,17 +237,30 @@ function signMat(kind) {
   return (signMats[kind] = new T.MeshBasicMaterial({ map: t }));
 }
 // (nx, nz) is the direction the sign face points, i.e. towards the driver it addresses
-function addSign(kind, x, z, nx, nz) {
+function addSign(kind, x, z, nx, nz, parent) {
   const geo = kind === 'stop' ? GEO.signOct : kind === 'walk' ? GEO.signSquare : GEO.signRound;
   const g = new T.Group(); g.position.set(x, 0, z); g.rotation.y = Math.atan2(nx, nz);
   const pole = new T.Mesh(GEO.signPole, MAT.pole); pole.position.y = 1.3;
   const face = new T.Mesh(geo, signMat(String(kind))); face.position.set(0, 2.7, 0.06);
   const back = new T.Mesh(geo, MAT.pole); back.position.set(0, 2.7, 0.04); back.rotation.y = Math.PI;
-  g.add(pole, face, back); scene.add(g);
+  g.add(pole, face, back); (parent || scene).add(g);
 }
 const segKey = (a, b) => a.j === b.j ? `x:${Math.min(a.i, b.i)},${a.j}` : `z:${a.i},${Math.min(a.j, b.j)}`;
 function limitAt(x, z) {   // null inside junctions and off the road: the previous limit keeps applying
   if (x > LOT.x0 - 5) return 20;
+  // NHAI highway (80) and its feeder from the city
+  if (Math.abs(z - HWY.z) < HWY.w / 2 && x >= HWY.x0 && x <= HWY.x1) return 80;
+  if (Math.abs(x) < W / 2 && z < -HALF && z > HWY.z) return 60;
+  // village roads
+  if (x >= VILLAGE.x0 && x <= VILLAGE.x1 && z >= VILLAGE.z0 && z <= VILLAGE.z1) {
+    if (Math.abs(z) < 4 || Math.abs(x + 290) < 4 || Math.abs(x + 340) < 4) return 30;
+  }
+  if (x < -HALF && x > VILLAGE.x1 && Math.abs(z) < W / 2) return 40; // feeder into the village
+  // mountain road
+  if (mtnRoad) {
+    const n = nearestMtn(x, z);
+    if (n && n.dist < mtnRoad.halfW) return n.tun ? 40 : 40;
+  }
   const i = Math.round(x / S), j = Math.round(z / S);
   const onX = Math.abs(z - j * S) < W / 2 && Math.abs(x) <= HALF, onZ = Math.abs(x - i * S) < W / 2 && Math.abs(z) <= HALF;
   if (onX && !onZ) return ZONE30.has(`x:${Math.floor(x / S)},${j}`) ? 30 : 50;
@@ -460,6 +498,10 @@ function buildWorld() {
     flat(scene, w, h, MAT.white, x, 0.05, z);
   for (let k = 0; k < 9; k++) { tree(LOT.x0 - 5, LOT.z0 + k * 16, 1); tree(LOT.x1 + 5, LOT.z0 + k * 16, 1); tree(LOT.x0 + k * 16, LOT.z1 + 5, 1); }
 
+  buildHighway();
+  buildVillage(rand);
+  buildMountain();
+
   // checkpoint marker
   ring = new T.Group();
   const rm = new T.MeshBasicMaterial({ color: 0xffc530, transparent: true, opacity: 0.45, side: T.DoubleSide, depthWrite: false });
@@ -474,6 +516,132 @@ function buildWorld() {
   spawnTraffic(trafficN);
   if (pedsOn) spawnPeds(); else peds = [];
   headlights = null; rain = null; applyEnv();
+}
+
+// ---------------------------------------------------------------- Vertex terrain extensions: NHAI / village / mountain+tunnel
+function buildHighway() {
+  const tex = ROAD_TEX.clone(); tex.repeat.set((HWY.x1 - HWY.x0) / 10, 2);
+  flat(scene, HWY.x1 - HWY.x0, HWY.w, lam(0xffffff, { map: tex }), (HWY.x0 + HWY.x1) / 2, 0.03, HWY.z);
+  drivable.push({ x0: HWY.x0, x1: HWY.x1, z0: HWY.z - HWY.w / 2, z1: HWY.z + HWY.w / 2 });
+  // median strip
+  flat(scene, HWY.x1 - HWY.x0, 1.2, lam(0x2f6b3a), (HWY.x0 + HWY.x1) / 2, 0.06, HWY.z);
+  // feeder from city south edge down to the highway
+  const feedLen = -HALF - HWY.z, feedMid = (-HALF + HWY.z) / 2;
+  const ftex = ROAD_TEX.clone(); ftex.repeat.set(1, feedLen / 12);
+  flat(scene, W, feedLen, lam(0xffffff, { map: ftex }), 0, 0.03, feedMid);
+  drivable.push({ x0: -W / 2, x1: W / 2, z0: HWY.z, z1: -HALF });
+  // lane edge lines
+  for (const sgn of [1, -1]) {
+    flat(scene, HWY.x1 - HWY.x0, 0.2, MAT.white, (HWY.x0 + HWY.x1) / 2, 0.07, HWY.z + sgn * (HWY.w / 2 - 0.4));
+    flat(scene, HWY.x1 - HWY.x0, 0.15, basic(0xf2c230), (HWY.x0 + HWY.x1) / 2, 0.07, HWY.z + sgn * 5.5);
+  }
+  // NHAI-style green gantries
+  for (const gx of [-80, 40, 180]) {
+    const gantry = new T.Group(); gantry.position.set(gx, 0, HWY.z);
+    const postL = new T.Mesh(new T.BoxGeometry(0.4, 7, 0.4), MAT.pole); postL.position.set(0, 3.5, -HWY.w / 2 - 1);
+    const postR = postL.clone(); postR.position.z = HWY.w / 2 + 1;
+    const beam = new T.Mesh(new T.BoxGeometry(0.4, 0.5, HWY.w + 3), MAT.pole); beam.position.set(0, 7, 0);
+    const board = new T.Mesh(new T.BoxGeometry(0.15, 1.6, 8), lam(0x1f7a3a)); board.position.set(-0.3, 6.2, 0);
+    gantry.add(postL, postR, beam, board); scene.add(gantry);
+  }
+  addSign(80, HWY.x0 + 20, HWY.z - HWY.w / 2 - 2, 0, 1);
+  addSign(80, -10, -HALF - 20, 1, 0);
+  // soft shoulders / embankment colour
+  flat(scene, HWY.x1 - HWY.x0 + 40, 40, lam(0x6aa35a), (HWY.x0 + HWY.x1) / 2, -0.01, HWY.z);
+}
+
+function buildVillage(rand) {
+  const roadMat = lam(0xffffff, { map: (() => { const t = ROAD_TEX.clone(); t.repeat.set(20, 1); return t; })() });
+  // main east–west village road and two cross lanes
+  flat(scene, VILLAGE.x1 - VILLAGE.x0, 8, roadMat, (VILLAGE.x0 + VILLAGE.x1) / 2, 0.03, 0);
+  drivable.push({ x0: VILLAGE.x0, x1: VILLAGE.x1, z0: -4, z1: 4 });
+  for (const cx of [-290, -340]) {
+    flat(scene, 8, VILLAGE.z1 - VILLAGE.z0, roadMat, cx, 0.04, 0, Math.PI / 2);
+    drivable.push({ x0: cx - 4, x1: cx + 4, z0: VILLAGE.z0, z1: VILLAGE.z1 });
+  }
+  // feeder from city west edge
+  flat(scene, -HALF - VILLAGE.x1, W, roadMat, (-HALF + VILLAGE.x1) / 2, 0.03, 0);
+  drivable.push({ x0: VILLAGE.x1, x1: -HALF, z0: -W / 2, z1: W / 2 });
+  addSign(30, VILLAGE.x1 - 8, 6, 1, 0);
+  // temple gopuram-style landmark
+  const temple = new T.Group(); temple.position.set(-320, 0, -55);
+  const base = new T.Mesh(new T.BoxGeometry(18, 4, 14), lam(0xd4b483)); base.position.y = 2; base.castShadow = true;
+  const tower = new T.Mesh(new T.BoxGeometry(8, 14, 8), lam(0xc8985a)); tower.position.y = 11;
+  const tip = new T.Mesh(new T.ConeGeometry(5, 6, 4), lam(0xb07a3a)); tip.position.y = 21;
+  temple.add(base, tower, tip); scene.add(temple);
+  colliders.push({ x0: -329, x1: -311, z0: -62, z1: -48 });
+  // village huts / shops
+  const hues = [0xc9a06a, 0xd8c3a0, 0xb8885a, 0xe8d5b0, 0xa87848];
+  for (let k = 0; k < 16; k++) {
+    const x = VILLAGE.x0 + 18 + (k % 8) * 20 + (rand() - 0.5) * 4;
+    const z = (k < 8 ? 1 : -1) * (18 + rand() * 40);
+    if (Math.abs(z) < 8) continue;
+    const w = 6 + rand() * 5, d = 5 + rand() * 4, h = 3 + rand() * 2.5;
+    const hut = new T.Mesh(new T.BoxGeometry(w, h, d), lam(hues[k % hues.length]));
+    hut.position.set(x, h / 2, z); hut.castShadow = true; scene.add(hut);
+    const roof = new T.Mesh(new T.ConeGeometry(Math.max(w, d) * 0.7, 2.2, 4), lam(0x6b3a1e));
+    roof.position.set(x, h + 1, z); scene.add(roof);
+    colliders.push({ x0: x - w / 2, x1: x + w / 2, z0: z - d / 2, z1: z + d / 2 });
+    if (rand() > 0.4) tree(x + (rand() - 0.5) * 14, z + (rand() > 0.5 ? 10 : -10), 0.7 + rand() * 0.5);
+  }
+  flat(scene, VILLAGE.x1 - VILLAGE.x0 + 40, VILLAGE.z1 - VILLAGE.z0 + 40, lam(0x7aab5a), (VILLAGE.x0 + VILLAGE.x1) / 2, -0.015, 0);
+}
+
+function buildMountain() {
+  // Path samples: start north of the city, climb, tunnel, descend to a valley end
+  const samples = [
+    [0, 175, 0], [0, 210, 3], [8, 250, 8], [30, 290, 13], [55, 310, 16],
+    [95, 318, 16], [135, 318, 16], [175, 330, 12], [200, 360, 5], [210, 390, 0],
+  ];
+  const pts = [];
+  for (let i = 0; i < samples.length - 1; i++) {
+    const [x0, z0, h0] = samples[i], [x1, z1, h1] = samples[i + 1];
+    const n = Math.max(4, Math.round(Math.hypot(x1 - x0, z1 - z0) / 6));
+    for (let k = 0; k < n; k++) {
+      const t = k / n, x = x0 + (x1 - x0) * t, z = z0 + (z1 - z0) * t, h = h0 + (h1 - h0) * t;
+      const tun = z > 300 && z < 335 && x > 70 && x < 155;
+      pts.push({ x, z, h, i: pts.length, tun });
+    }
+  }
+  const halfW = 5.5;
+  mtnRoad = { pts, halfW };
+  // feeder from city north edge
+  flat(scene, W, 20, lam(0x4a4d53), 0, 0.03, HALF + 8);
+  drivable.push({ x0: -W / 2, x1: W / 2, z0: HALF, z1: HALF + 20 });
+  // road ribbons + rock shoulders
+  const rock = lam(0x6a655c), asphalt = lam(0x3b3e44), snow = lam(0x8f8a82);
+  for (let i = 0; i < pts.length - 1; i++) {
+    const a = pts[i], b = pts[i + 1], dx = b.x - a.x, dz = b.z - a.z, len = Math.hypot(dx, dz) || 1;
+    const ang = Math.atan2(dx, dz), midH = (a.h + b.h) / 2;
+    const road = new T.Mesh(new T.BoxGeometry(halfW * 2, 0.35, len + 0.4), asphalt);
+    road.position.set((a.x + b.x) / 2, midH + 0.1, (a.z + b.z) / 2);
+    road.rotation.order = 'YXZ'; road.rotation.y = ang; road.rotation.x = -Math.atan2(b.h - a.h, len);
+    road.receiveShadow = true; scene.add(road);
+    drivable.push({ x0: Math.min(a.x, b.x) - halfW, x1: Math.max(a.x, b.x) + halfW, z0: Math.min(a.z, b.z) - halfW, z1: Math.max(a.z, b.z) + halfW });
+    // hillside blocks
+    for (const sx of [-1, 1]) {
+      const hill = new T.Mesh(new T.BoxGeometry(10, 4 + midH, len), sx > 0 ? rock : snow);
+      hill.position.set((a.x + b.x) / 2 + Math.cos(ang) * sx * (halfW + 6), midH / 2, (a.z + b.z) / 2 - Math.sin(ang) * sx * (halfW + 6));
+      hill.rotation.y = ang; scene.add(hill);
+    }
+  }
+  // tunnel tube over the mid section
+  const tunPts = pts.filter(p => p.tun);
+  if (tunPts.length > 1) {
+    const a = tunPts[0], b = tunPts[tunPts.length - 1];
+    const dx = b.x - a.x, dz = b.z - a.z, len = Math.hypot(dx, dz), ang = Math.atan2(dx, dz);
+    const tube = new T.Mesh(new T.CylinderGeometry(7, 7, len + 8, 20, 1, true), lam(0x2a2d33, { side: T.DoubleSide }));
+    tube.position.set((a.x + b.x) / 2, a.h + 3.2, (a.z + b.z) / 2);
+    tube.rotation.z = Math.PI / 2; tube.rotation.y = ang;
+    scene.add(tube);
+    // portal rings
+    for (const p of [a, b]) {
+      const portal = new T.Mesh(new T.TorusGeometry(7.2, 0.45, 8, 24), lam(0x3a3f47));
+      portal.position.set(p.x, p.h + 3.2, p.z); portal.rotation.y = ang; scene.add(portal);
+    }
+  }
+  addSign(40, 5, 185, 0, -1);
+  for (let k = 0; k < 20; k++) tree(20 + (k % 5) * 18, 200 + Math.floor(k / 5) * 30, 0.9 + (k % 3) * 0.2);
 }
 
 function lightState(n, axis) {
@@ -704,6 +872,10 @@ function obbOverlap(a, b) {
 const toLocal = (o, x, z) => { const rx = x - o.x, rz = z - o.z, s = Math.sin(o.th), c = Math.cos(o.th); return [rx * c - rz * s, rx * s + rz * c]; }; // [side, forward]
 const isDrivable = (x, z) => drivable.some(r => x >= r.x0 && x <= r.x1 && z >= r.z0 && z <= r.z1);
 const inLot = () => car.x > LOT.x0 - 5;
+const onExtras = () =>   // highway / village / mountain — skip city lane-side rules
+  (Math.abs(car.z - HWY.z) < HWY.w || (car.z < -HALF && Math.abs(car.x) < W)) ||
+  (car.x < -HALF) ||
+  (mtnRoad && nearestMtn(car.x, car.z)?.dist < mtnRoad.halfW + 2);
 function carCorners() {
   const s = Math.sin(car.th), c = Math.cos(car.th), out = [];
   for (const a of [CW, -CW]) for (const b of [CL, -CL]) out.push([car.x + c * a + s * b, car.z - s * a + c * b]);
@@ -742,9 +914,46 @@ function linePts(x0, z0, x1, z1, gap) { const n = Math.ceil(Math.hypot(x1 - x0, 
 const SECURE_TXT = () => tx('select P', 'apply the parking brake (Space) and select neutral');
 const READY_TXT = () => tx('Get ready: seatbelt (B), engine (I), select Drive (X).', 'Get ready: seatbelt (B), engine (I), hold the clutch (Shift), select 1st (X) and release the parking brake (Space).');
 const cityStart = () => { const l = laneVec([1, 0]); return { x: -120 + l[0] * LANE, z: l[1] * LANE, th: Math.PI / 2 }; };
+const hwyStart = () => ({ x: HWY.x0 + 30, z: HWY.z + 5.5 * side, th: Math.PI / 2 });
+const villageStart = () => ({ x: VILLAGE.x1 - 15, z: 0, th: -Math.PI / 2 });
+const mtnStart = () => ({ x: 0, z: 178, th: 0 });
+
+function cityRouteLesson(route, introExtra) {
+  const st = [{ type: 'ready', text: READY_TXT() + (introExtra || '') }];
+  for (let k = 1; k < route.length - 1; k++) {
+    const a = route[k], b = route[k + 1], p = route[k - 1];
+    const d = [b[0] - a[0], b[1] - a[1]], d0 = [a[0] - p[0], a[1] - p[1]], l = laneVec(d);
+    const cross = d0[0] * d[1] - d0[1] * d[0];
+    const text = tr(cross < 0 ? 'At the next junction turn LEFT. Signal first (Q) and give way to oncoming traffic.'
+      : cross > 0 ? 'At the next junction turn RIGHT. Signal first (E) and slow down for the corner.'
+      : 'Go straight on at the junction. Stop if the light is red.');
+    const extra = (STOP_NODES.has(a[0] + ',' + a[1]) ? tr(' It has a STOP sign: come to a complete stop first.') : '')
+      + (ZONE30.has(segKey({ i: p[0], j: p[1] }, { i: a[0], j: a[1] })) ? tr(' 30 zone ahead — give way at the zebra crossing.') : '');
+    const mx = (a[0] + b[0]) / 2 * S + l[0] * LANE, mz = (a[1] + b[1]) / 2 * S + l[1] * LANE;
+    if (k === route.length - 2) {
+      const box = addBox({ x: mx + l[0] * 0.6, z: mz + l[1] * 0.6, th: Math.atan2(d[0], d[1]), hw: 2.2, hl: 5 });
+      st.push({ type: 'stop', box, park: true, text: text + extra + TL` Then pull over in the yellow box, stop and ${SECURE_TXT()}.` });
+    } else st.push({ type: 'cp', x: mx, z: mz, r: 4.5, text: text + extra });
+  }
+  return { start: cityStart(), steps: st };
+}
 
 const LESSONS = [
-  { id: 'basics', title: '1 · First steps', desc: 'Seatbelt, engine, gears, a slalom between cones and a controlled stop.', build() {
+  // —— Controls & RTO tracks (Vertex: hand/foot, pre-drive, road signs, H / 8 / parking / ramp)
+  { id: 'predrive', group: 'Controls & RTO', title: '1 · Pre-drive checks', desc: 'Seatbelt, mirrors, indicators, horn and controls before you move — CMVR-style cockpit checks.', build() {
+      const box = addBox({ x: 300, z: -40, th: 0, hw: 2.4, hl: 4 });
+      return { start: { x: 275, z: -52, th: 0 }, steps: [
+        { type: 'belt', text: tr('Pre-drive: fasten your seatbelt — press B.') },
+        { type: 'mirrors', text: tr('Check your mirrors — press V to toggle them off, then on again.') },
+        { type: 'sigL', text: tr('Test the left indicator — press Q.') },
+        { type: 'sigR', text: tr('Test the right indicator — press E.') },
+        { type: 'horn', text: tr('Sound the horn briefly — press H.') },
+        { type: 'engine', text: tx('Start the engine — press I.', 'Select neutral (N), then start the engine — press I.') },
+        { type: 'drive', text: tx('Select Drive (X) and release the parking brake if it is on (Space).', 'Hold the clutch (Shift), select 1st (X) and release the parking brake (Space).') },
+        { type: 'stop', box, park: true, text: TL`Creep forward into the yellow box, stop and ${SECURE_TXT()}.` },
+      ] };
+    } },
+  { id: 'basics', group: 'Controls & RTO', title: '2 · Hand & foot controls', desc: 'Steering, pedals and gears: slalom between cones and a controlled stop.', build() {
       const X = 275;
       [-25, -10, 5, 20].forEach(z => addCone(X, z));
       const box = addBox({ x: 340, z: 52, th: Math.PI / 2, hw: 2.3, hl: 4.2 });
@@ -760,7 +969,19 @@ const LESSONS = [
         { type: 'secure', text: tx('Good stop! Now select Park — press Z until P is highlighted.', 'Good stop! Apply the parking brake (Space) and select neutral (Z, with the clutch down).') },
       ] };
     } },
-  { id: 'parking', title: '2 · Parking', desc: 'Park in the free bay between two cars without touching anything. Try reversing in.', build() {
+  { id: 'signs', group: 'Controls & RTO', title: '3 · Road signs', desc: 'Read and obey speed limits, STOP and pedestrian signs on a short training route.', build() {
+      addSign(20, 290, -20, 0, -1, lessonGroup); addSign('stop', 330, 10, -1, 0, lessonGroup); addSign('walk', 350, 40, 0, -1, lessonGroup);
+      const stopBox = addBox({ x: 318, z: 10, th: Math.PI / 2, hw: 2.2, hl: 3.5 });
+      const end = addBox({ x: 360, z: 52, th: Math.PI / 2, hw: 2.3, hl: 4 });
+      return { start: { x: 275, z: -50, th: 0 }, steps: [
+        { type: 'ready', text: READY_TXT() + tr(' Watch every road sign — speed, STOP and pedestrian warning.') },
+        { type: 'cp', x: 290, z: -5, r: 3, text: tr('20 km/h zone ahead. Keep below the limit.') },
+        { type: 'stop', box: stopBox, text: tr('STOP sign: come to a complete stop inside the yellow box.') },
+        { type: 'cp', x: 350, z: 30, r: 3.5, text: tr('Pedestrian warning ahead — slow down and look both ways.') },
+        { type: 'stop', box: end, park: true, text: TL`Finish in the yellow box, then ${SECURE_TXT()}.` },
+      ] };
+    } },
+  { id: 'parking', group: 'Controls & RTO', title: '4 · Parking', desc: 'Park in the free bay between two cars without touching anything. Try reversing in.', build() {
       const bz = 55, bx = k => 310 + (k - 3) * 3.2;
       const paint = ['#2f6fd3', '#f0f0f0', '#2b2f36', '#2e9c5a', '#e0a422', '#9aa3ad', '#7b4bc4'];
       for (let k = 0; k <= 7; k++) flat(lessonGroup, 0.14, 6.4, MAT.white, bx(k) - 1.6, 0.06, bz);
@@ -777,7 +998,7 @@ const LESSONS = [
         { type: 'stop', box, park: true, text: TL`Park fully inside the free bay, stop, then ${SECURE_TXT()}. For reverse: stop, select R (Z), steer and back in slowly.` },
       ] };
     } },
-  { id: 'eight', title: '3 · "8" track', desc: 'Drive a figure of eight between the cones — one loop each way — without touching any.', build() {
+  { id: 'eight', group: 'Controls & RTO', title: '5 · "8" track', desc: 'RTO figure-of-eight between cones — one loop each way — without touching any.', build() {
       const cx = 320, cz = 0, R = 9, hw = 2.3, len = 24;
       const lanes = [(x, z) => Math.abs(Math.hypot(x - cx, z - (cz - R)) - R) < hw - 0.2, (x, z) => Math.abs(Math.hypot(x - cx, z - (cz + R)) - R) < hw - 0.2,
         (x, z) => Math.abs(z - cz) < hw - 0.2 && Math.abs(x - cx) < len + 0.5];
@@ -798,9 +1019,9 @@ const LESSONS = [
         { type: 'stop', box, park: true, text: TL`Leave through the centre, stop in the yellow box, then ${SECURE_TXT()}.` },
       ] };
     } },
-  { id: 'h', title: '4 · "H" track', desc: 'Drive forward through the H — up one leg, across the bar, up the other — then reverse all the way back.', build() {
+  { id: 'h', group: 'Controls & RTO', title: '6 · "H" track', desc: 'RTO H-track: forward through the H, then reverse all the way back.', build() {
       const hx = 320, hz = 0, D = 10, L = 18, hw = 3;
-      const rects = [[hx - D, hz, hw, L], [hx + D, hz, hw, L], [hx, hz, D, hw]];   // centre x, z, half x, half z
+      const rects = [[hx - D, hz, hw, L], [hx + D, hz, hw, L], [hx, hz, D, hw]];
       const lanes = rects.map(([x0, z0, a, b]) => (x, z) => Math.abs(x - x0) < a - 0.2 && Math.abs(z - z0) < b - 0.2);
       const pts = [];
       for (const [x0, z0, a, b] of rects) for (const sgn of [1, -1])
@@ -816,13 +1037,13 @@ const LESSONS = [
         { type: 'stop', box: home, park: true, text: TL`Keep reversing round into the first leg, stop in the starting box, then ${SECURE_TXT()}.` },
       ] };
     } },
-  { id: 'hill', title: '5 · Hill start', desc: 'Stop on a slope, then pull away uphill without rolling back. Come down the far side under control.', build() {
+  { id: 'hill', group: 'Controls & RTO', title: '7 · Ramp / hill start', desc: 'RTO ramp track: stop on a slope, pull away without rolling back, descend under control.', build() {
       const x0 = 284, z0 = -35, up = 25, top = 12, h = 3.5, hw = 4;
       ramp = { x: x0, z: z0, up, top, h, len: 2 * up + top, hw };
       const shape = new T.Shape([new T.Vector2(0, 0), new T.Vector2(up, h), new T.Vector2(up + top, h), new T.Vector2(ramp.len, 0)]);
       const m = new T.Mesh(new T.ExtrudeGeometry(shape, { depth: 2 * hw, bevelEnabled: false }), lam(0x5a5d64));
       m.position.set(x0, 0, z0 - hw); m.castShadow = m.receiveShadow = true; lessonGroup.add(m);
-      for (const sgn of [1, -1]) {   // painted edge lines following the slope
+      for (const sgn of [1, -1]) {
         const pitch = Math.atan(h / up), sl = Math.hypot(up, h), zz = z0 + sgn * (hw - 0.3);
         for (const [len, x, y, rz] of [[sl, x0 + up / 2, h / 2, pitch], [top, x0 + up + top / 2, h, 0], [sl, x0 + up + top + up / 2, h / 2, -pitch]]) {
           const line = new T.Mesh(new T.BoxGeometry(len, 0.02, 0.2), MAT.white);
@@ -841,27 +1062,98 @@ const LESSONS = [
         { type: 'stop', box: end, park: true, text: TL`Go down the far side under control — brake to stay below 20 km/h. Stop in the box, then ${SECURE_TXT()}.` },
       ] };
     } },
-  { id: 'city', title: '6 · City exam', desc: 'Follow the route through traffic: obey lights and signs, give way to pedestrians, signal every turn.', build() {
-      const route = [[-2, 0], [-1, 0], [0, 0], [0, 1], [1, 1], [1, 0], [1, -1], [0, -1], [-1, -1], [-1, 0], [-2, 0]];
-      const st = [{ type: 'ready', text: READY_TXT() + tr(' Watch for speed-limit signs, STOP signs and zebra crossings.') }];
-      for (let k = 1; k < route.length - 1; k++) {
-        const a = route[k], b = route[k + 1], p = route[k - 1];
-        const d = [b[0] - a[0], b[1] - a[1]], d0 = [a[0] - p[0], a[1] - p[1]], l = laneVec(d);
-        const cross = d0[0] * d[1] - d0[1] * d[0];
-        const text = tr(cross < 0 ? 'At the next junction turn LEFT. Signal first (Q) and give way to oncoming traffic.'
-          : cross > 0 ? 'At the next junction turn RIGHT. Signal first (E) and slow down for the corner.'
-          : 'Go straight on at the junction. Stop if the light is red.');
-        const extra = (STOP_NODES.has(a[0] + ',' + a[1]) ? tr(' It has a STOP sign: come to a complete stop first.') : '')
-          + (ZONE30.has(segKey({ i: p[0], j: p[1] }, { i: a[0], j: a[1] })) ? tr(' 30 zone ahead — give way at the zebra crossing.') : '');
-        const mx = (a[0] + b[0]) / 2 * S + l[0] * LANE, mz = (a[1] + b[1]) / 2 * S + l[1] * LANE;
-        if (k === route.length - 2) {
-          const box = addBox({ x: mx + l[0] * 0.6, z: mz + l[1] * 0.6, th: Math.atan2(d[0], d[1]), hw: 2.2, hl: 5 });
-          st.push({ type: 'stop', box, park: true, text: text + extra + TL` Then pull over in the yellow box, stop and ${SECURE_TXT()}.` });
-        } else st.push({ type: 'cp', x: mx, z: mz, r: 4.5, text: text + extra });
-      }
-      return { start: cityStart(), steps: st };
+
+  // —— City & traffic (Vertex: traffic, city road, AI traffic control)
+  { id: 'traffic', group: 'City & traffic', title: '8 · Traffic scenario', desc: 'Dense urban traffic — buses, autos, two-wheelers. Keep your lane and following distance.',
+    trafficN: 28, build() {
+      return cityRouteLesson([[-2, 0], [-1, 0], [0, 0], [1, 0], [1, 1], [0, 1], [-1, 1], [-1, 0], [-2, 0]],
+        tr(' Heavy traffic ahead — leave a safe gap and watch for two-wheelers near the kerb.'));
     } },
-  { id: 'free', title: 'Free drive', desc: 'No route, no pass or fail — explore the city and practise. Mistakes are still called out.', build() {
+  { id: 'city', group: 'City & traffic', title: '9 · City road scenario', desc: 'Complex city roads: lights, STOP signs, 30 zones, zebra crossings and turn signals.',
+    trafficN: 16, build() {
+      return cityRouteLesson([[-2, 0], [-1, 0], [0, 0], [0, 1], [1, 1], [1, 0], [1, -1], [0, -1], [-1, -1], [-1, 0], [-2, 0]],
+        tr(' Watch for speed-limit signs, STOP signs and zebra crossings.'));
+    } },
+  { id: 'ailights', group: 'City & traffic', title: '10 · AI traffic lights', desc: 'Smart junction timing — stop on red, clear on green, never jump the light.',
+    trafficN: 20, build() {
+      return cityRouteLesson([[-1, -1], [-1, 0], [0, 0], [0, 1], [1, 1], [1, 0], [0, 0], [0, -1], [-1, -1]],
+        tr(' Focus on the traffic lights at every junction. Red = stop. Green = go when clear.'));
+    } },
+
+  // —— Weather & visibility (Vertex: rain, night, fog, all weather)
+  { id: 'rain', group: 'Weather & visibility', title: '11 · Realistic rain', desc: 'Wet roads: longer braking distance and lighter steering. Drive confidently in the rain.',
+    env: { time: 'day', weather: 'rain' }, trafficN: 12, build() {
+      return cityRouteLesson([[-2, 0], [-1, 0], [0, 0], [0, -1], [1, -1], [1, 0], [0, 0], [-1, 0], [-2, 0]],
+        tr(' Rain reduces grip — brake earlier and keep speeds down.'));
+    } },
+  { id: 'night', group: 'Weather & visibility', title: '12 · Night scenario', desc: 'Low-light city driving with headlights. Improve visibility and control after dark.',
+    env: { time: 'night', weather: 'clear' }, trafficN: 14, build() {
+      return cityRouteLesson([[-2, 0], [-1, 0], [0, 0], [1, 0], [1, -1], [0, -1], [-1, -1], [-1, 0], [-2, 0]],
+        tr(' Night drive — use your headlights and watch for pedestrians in the dark.'));
+    } },
+  { id: 'fog', group: 'Weather & visibility', title: '13 · Realistic fog', desc: 'Thick fog with short sight distance. Slow down and leave a bigger gap.',
+    env: { time: 'day', weather: 'fog' }, trafficN: 10, build() {
+      return cityRouteLesson([[-1, 0], [0, 0], [0, 1], [1, 1], [1, 0], [0, 0], [-1, 0]],
+        tr(' Fog ahead — drop your speed and increase following distance.'));
+    } },
+  { id: 'allweather', group: 'Weather & visibility', title: '14 · All time · all weather', desc: 'Free practice in any condition. Use the instructor screen to switch day/night and weather.',
+    env: { time: 'dusk', weather: 'clear' }, trafficN: 16, build() {
+      return { start: cityStart(), steps: [] };
+    } },
+
+  // —— Terrains (Vertex: village, mountain/valley, tunnel, NHAI)
+  { id: 'village', group: 'Terrains', title: '15 · Village scenario', desc: 'Rural roads, temple landmark and narrow lanes. Keep to 30 km/h and watch the bends.',
+    trafficN: 0, build() {
+      const end = addBox({ x: -345, z: 70, th: 0, hw: 2.4, hl: 4 });
+      return { start: villageStart(), steps: [
+        { type: 'ready', text: READY_TXT() + tr(' Village roads — slow down near houses and the temple.') },
+        { type: 'cp', x: -290, z: 0, r: 4, text: tr('Continue into the village. Stay on the narrow road.') },
+        { type: 'cp', x: -290, z: -40, r: 4, text: tr('Pass the temple area on your right. Signal if you turn.') },
+        { type: 'cp', x: -340, z: 0, r: 4, text: tr('Turn onto the next village lane and head north.') },
+        { type: 'stop', box: end, park: true, text: TL`Stop in the yellow box at the edge of the village, then ${SECURE_TXT()}.` },
+      ] };
+    } },
+  { id: 'mountain', group: 'Terrains', title: '16 · Mountain & valley', desc: 'Climbing bends with elevation change. Handle challenging grades and tight turns.',
+    trafficN: 0, build() {
+      const end = addBox({ x: 55, z: 310, th: Math.PI / 2, hw: 2.2, hl: 3.5, y: groundH(55, 310) });
+      return { start: mtnStart(), steps: [
+        { type: 'ready', text: READY_TXT() + tr(' Mountain road — use a low gear if you are in manual, and brake early on bends.') },
+        { type: 'cp', x: 0, z: 220, r: 4, text: tr('Climb steadily. Stay in the centre of the mountain lane.') },
+        { type: 'cp', x: 25, z: 280, r: 4, text: tr('Tight bend ahead — slow down before you turn.') },
+        { type: 'stop', box: end, park: true, text: TL`Stop before the tunnel portal in the yellow box, then ${SECURE_TXT()}.` },
+      ] };
+    } },
+  { id: 'tunnel', group: 'Terrains', title: '17 · Mountain tunnel', desc: 'Drive through a dark mountain tunnel. Headlights on — keep centred and calm.',
+    env: { time: 'day', weather: 'clear' }, trafficN: 0, build() {
+      const end = addBox({ x: 205, z: 375, th: 0, hw: 2.4, hl: 4, y: groundH(205, 375) });
+      return { start: { x: 50, z: 308, th: Math.PI / 2 }, steps: [
+        { type: 'ready', text: READY_TXT() + tr(' Tunnel ahead — headlights come on automatically inside. Keep a steady speed.') },
+        { type: 'cp', x: 95, z: 318, r: 4, text: tr('Enter the tunnel. Stay in the middle of the roadway.') },
+        { type: 'cp', x: 140, z: 318, r: 4, text: tr('Halfway through — do not stop inside the tunnel.') },
+        { type: 'cp', x: 185, z: 340, r: 4, text: tr('Exit into the valley. Descend under control.') },
+        { type: 'stop', box: end, park: true, text: TL`Stop in the valley box, then ${SECURE_TXT()}.` },
+      ] };
+    } },
+  { id: 'nhai', group: 'Terrains', title: '18 · NHAI highway', desc: 'Multi-lane national highway: lane discipline, 80 km/h limit and overhead gantries.',
+    trafficN: 0, build() {
+      const paint = [0x2f6fd3, 0xf0f0f0, 0x2b2f36, 0xe0a422];
+      const laneZ = HWY.z + 5.5 * side, otherZ = HWY.z - 5.5 * side;
+      for (let k = 0; k < 4; k++) {
+        const o = { x: 60 + k * 55, z: otherZ, th: Math.PI / 2, hw: CW, hl: CL };
+        const m = makeCar(paint[k]); m.position.set(o.x, 0, o.z); m.rotation.y = o.th;
+        lessonGroup.add(m); statics.push(o);
+      }
+      const end = addBox({ x: 300, z: laneZ, th: Math.PI / 2, hw: 2.5, hl: 5 });
+      return { start: hwyStart(), steps: [
+        { type: 'ready', text: READY_TXT() + tr(' NHAI highway — keep left (or right if set), stay under 80 km/h, hold your lane.') },
+        { type: 'cp', x: 0, z: laneZ, r: 5, text: tr('Merge and settle into your lane. Watch the green gantries.') },
+        { type: 'cp', x: 100, z: laneZ, r: 5, text: tr('Overtake only if clear, then return to your lane. Signal first.') },
+        { type: 'cp', x: 200, z: laneZ, r: 5, text: tr('Maintain lane discipline past the parked traffic on the other side.') },
+        { type: 'stop', box: end, park: true, text: TL`Pull into the yellow box on the hard shoulder, stop and ${SECURE_TXT()}.` },
+      ] };
+    } },
+  { id: 'free', group: 'Terrains', title: 'Free drive', desc: 'Explore city, village, highway and mountain. Mistakes are still called out.',
+    trafficN: 16, build() {
       return { start: cityStart(), steps: [] };
     } },
 ];
@@ -883,8 +1175,7 @@ function applyEnv() {
       playerMesh.add(l, l.target); return l;
     });
   }
-  const dark = env.time !== 'day' || env.weather !== 'clear';
-  headlights.forEach(l => { l.intensity = env.time === 'night' ? 60 : dark ? 25 : 0; });
+  updateHeadlights();
   if (!rain) {
     const n = 2400, pos = new Float32Array(n * 6);
     for (let i = 0; i < n; i++) { const x = (Math.random() - 0.5) * 80, y = Math.random() * 30, z = (Math.random() - 0.5) * 80; pos.set([x, y, z, x, y - 0.6, z], i * 6); }
@@ -893,6 +1184,12 @@ function applyEnv() {
     rain.frustumCulled = false; scene.add(rain);
   }
   rain.visible = env.weather === 'rain';
+}
+function updateHeadlights() {
+  if (!headlights) return;
+  const dark = env.time !== 'day' || env.weather !== 'clear';
+  const tun = inTunnel();
+  headlights.forEach(l => { l.intensity = tun ? 70 : env.time === 'night' ? 60 : dark ? 25 : 0; });
 }
 function updateRain(dt) {   // drops fall and wrap inside a box that follows the camera
   if (!rain || !rain.visible) return;
@@ -947,7 +1244,8 @@ function onCmd(m) {
   sendState(true);
 }
 function sendWorld() {
-  sendInstr({ type: 'world', G, S, W, LOT, crosswalks: crosswalks.map(c => ({ x: c.x, z: c.z, ax: c.ax })), stops: [...STOP_NODES] });
+  sendInstr({ type: 'world', G, S, W, LOT, HWY, VILLAGE, mtn: mtnRoad ? mtnRoad.pts.map(p => [p.x, p.z]) : [],
+    crosswalks: crosswalks.map(c => ({ x: c.x, z: c.z, ax: c.ax })), stops: [...STOP_NODES] });
 }
 function sendState(now) {
   if (!now && clock - lastSend < 0.2) return;
@@ -977,7 +1275,10 @@ function updateEstop() {
 function startLesson(l) {
   lesson = l;
   scene.remove(lessonGroup); lessonGroup = new T.Group(); scene.add(lessonGroup);
-  cones = []; statics = []; ramp = null; rollDist = 0; lastH = 0;
+  cones = []; statics = []; ramp = null; rollDist = 0; lastH = 0; lessonFlags = {};
+  if (l.env) { env = { time: l.env.time || 'day', weather: l.env.weather || 'clear' }; applyEnv(); }
+  else { env = { time: 'day', weather: 'clear' }; applyEnv(); }
+  if (l.trafficN != null) trafficN = l.trafficN;
   const built = l.build();
   steps = built.steps; stepIdx = 0; startPose = built.start;
   Object.assign(car, built.start, { v: 0, steer: 0, gear: manual ? 'N' : 'P', engine: false, belt: false, signal: 0, clutch: 0, hand: manual, rpm: 0 });
@@ -986,7 +1287,7 @@ function startLesson(l) {
   spawnTraffic(trafficN);
   evLog = []; lessonT0 = clock; estop = null; $('banner').hidden = true;
   logEvent('info', TL`Lesson started: ${tr(l.title)}`);
-  camera.position.set(car.x - Math.sin(car.th) * 9, 5, car.z - Math.cos(car.th) * 9);
+  camera.position.set(car.x - Math.sin(car.th) * 9, 5 + groundH(car.x, car.z), car.z - Math.cos(car.th) * 9);
   $('toasts').innerHTML = '';
   for (const id of ['menu', 'pause', 'result']) $(id).hidden = true;
   $('hud').hidden = false;
@@ -1010,6 +1311,10 @@ function stepDone(s) {
     case 'secure': return isSecured() && Math.abs(car.v) < 0.15;
     case 'reverse': return car.gear === 'R';
     case 'ready': return car.belt && car.engine && inDriveGear();
+    case 'mirrors': return !!lessonFlags.mirrors;
+    case 'sigL': return !!lessonFlags.sigL;
+    case 'sigR': return !!lessonFlags.sigR;
+    case 'horn': return !!lessonFlags.horn;
     case 'cp': return Math.hypot(car.x - s.x, car.z - s.z) < s.r;
     case 'stop': return inBox(s.box) && Math.abs(car.v) < 0.15 && (!s.park || isSecured());
   }
@@ -1077,7 +1382,11 @@ function toggleEngine() {
   car.engine = !car.engine;
 }
 const toggleBelt = () => { car.belt = !car.belt; beep(700, 0.05); };
-const toggleSignal = s => { car.signal = car.signal === s ? 0 : s; };
+const toggleSignal = s => {
+  car.signal = car.signal === s ? 0 : s;
+  if (s === 1) lessonFlags.sigL = true;
+  if (s === -1) lessonFlags.sigR = true;
+};
 function togglePause() {
   if (state === 'run') { state = 'pause'; $('pause').hidden = false; }
   else if (state === 'pause') { state = 'run'; $('pause').hidden = true; }
@@ -1098,7 +1407,7 @@ window.addEventListener('keydown', e => {
     case 'KeyQ': toggleSignal(1); break;
     case 'KeyE': toggleSignal(-1); break;
     case 'KeyC': camMode = (camMode + 1) % 3; break;
-    case 'KeyV': mirrorsOn = !mirrorsOn; break;
+    case 'KeyV': mirrorsOn = !mirrorsOn; lessonFlags.mirrorToggles = (lessonFlags.mirrorToggles || 0) + 1; if (lessonFlags.mirrorToggles >= 2) lessonFlags.mirrors = true; break;
     case 'KeyR': startLesson(lesson); break;
     case 'Space': toggleHand(); break;
     case 'KeyN': case 'Digit0': setGear('N'); break;
@@ -1213,6 +1522,7 @@ function pollInput() {
   inp.clutchAxis = clutchAxis && !keys.clutch;
   inp.clutch = Math.max(clutch, keys.clutch ? 1 : 0);
   inp.horn = horn || keys.horn;
+  if (inp.horn) lessonFlags.horn = true;
   if (learning) stepLearning(gp);
   if (!$('wheel').hidden) updateWheelLive(gp);
 }
@@ -1415,7 +1725,7 @@ function checkRules(dt) {
   offRoad = !isDrivable(car.x + fx * 1.3, car.z + fz * 1.3) || !isDrivable(car.x - fx * 1.3, car.z - fz * 1.3);
   if (offRoad)
     penalize(inLot() ? 'Left the training area' : 'Left the roadway', 5, 3);
-  if (inLot()) { curNode = null; wrongT = 0; return limit; }
+  if (inLot() || onExtras()) { curNode = null; wrongT = 0; return limit; }
 
   // junction entry / exit: red lights and turn signals
   const i = Math.round(car.x / S), j = Math.round(car.z / S);
@@ -1551,9 +1861,18 @@ function updateHud(limit, blinkOn) {
   const X = x => cx + (x - car.x) * sc, Z = z => cy + (z - car.z) * sc;
   g.clearRect(0, 0, N, N);
   g.fillStyle = '#5b5f68'; g.fillRect(X(LOT.x0), Z(LOT.z0), (LOT.x1 - LOT.x0) * sc, (LOT.z1 - LOT.z0) * sc);
+  g.fillStyle = '#4a4e56'; g.fillRect(X(HWY.x0), Z(HWY.z - HWY.w / 2), (HWY.x1 - HWY.x0) * sc, HWY.w * sc);
+  g.fillStyle = '#6a7a5a'; g.fillRect(X(VILLAGE.x0), Z(VILLAGE.z0), (VILLAGE.x1 - VILLAGE.x0) * sc, (VILLAGE.z1 - VILLAGE.z0) * sc);
   g.strokeStyle = '#8a909b'; g.lineWidth = W * sc; g.beginPath();
   for (let k = -G; k <= G; k++) { g.moveTo(X(-HALF), Z(k * S)); g.lineTo(X(HALF), Z(k * S)); g.moveTo(X(k * S), Z(-HALF)); g.lineTo(X(k * S), Z(HALF)); }
+  g.moveTo(X(0), Z(-HALF)); g.lineTo(X(0), Z(HWY.z)); // highway feeder
+  g.moveTo(X(-HALF), Z(0)); g.lineTo(X(VILLAGE.x1), Z(0)); // village feeder
   g.stroke();
+  if (mtnRoad) {
+    g.strokeStyle = '#9a9080'; g.lineWidth = 6; g.beginPath();
+    mtnRoad.pts.forEach((p, i) => i ? g.lineTo(X(p.x), Z(p.z)) : g.moveTo(X(p.x), Z(p.z)));
+    g.stroke();
+  }
   g.fillStyle = '#fff'; for (const cw of crosswalks) g.fillRect(X(cw.x) - (cw.ax === 'x' ? 2 : 5), Z(cw.z) - (cw.ax === 'x' ? 5 : 2), cw.ax === 'x' ? 4 : 10, cw.ax === 'x' ? 10 : 4);
   g.fillStyle = '#7dffa8'; for (const p of peds) if (p.walking) g.fillRect(X(p.x) - 2, Z(p.z) - 2, 4, 4);
   for (const c of traffic) {
@@ -1607,6 +1926,7 @@ function frame(now) {
   }
   updateCamera(dt);
   updateRain(dt);
+  updateHeadlights();
   sendState(false);
   renderMain();
   const showMirrors = mirrorsOn && camMode !== 2 && (state === 'run' || state === 'pause');
@@ -1631,7 +1951,13 @@ function applyLanguage() {   // (re)draw every fixed text in the chosen language
   document.documentElement.lang = lang;
   for (const el of document.querySelectorAll('[data-tr]')) { el.dataset.en = el.dataset.en || el.textContent; el.textContent = tr(el.dataset.en); }
   $('lessons').innerHTML = '';
+  let lastGroup = '';
   for (const l of LESSONS) {
+    if (l.group && l.group !== lastGroup) {
+      lastGroup = l.group;
+      const h = document.createElement('div'); h.className = 'lesson-group'; h.textContent = tr(l.group);
+      $('lessons').appendChild(h);
+    }
     const b = document.createElement('button'); b.className = 'lesson';
     b.innerHTML = '<b></b><span></span>'; b.children[0].textContent = tr(l.title); b.children[1].textContent = tr(l.desc);
     b.onclick = () => startLesson(l); $('lessons').appendChild(b);

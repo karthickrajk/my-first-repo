@@ -87,7 +87,8 @@
   h1 span { color: var(--acc); }
   h2 { margin: 0 0 10px; font-size: 24px; }
   .sub { color: var(--dim); margin: 4px 0 18px; }
-  #lessons { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 10px; }
+  #lessons { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 10px; max-height: min(48vh, 420px); overflow: auto; padding-right: 4px; align-content: start; }
+  .lesson-group { grid-column: 1 / -1; margin-top: 6px; font-size: 11px; font-weight: 800; letter-spacing: .08em; text-transform: uppercase; color: var(--acc); }
   .lesson { text-align: left; padding: 14px; border-radius: 10px; border: 1px solid var(--line); background: rgba(255,255,255,.05); }
   .lesson:hover { border-color: var(--acc); background: rgba(255,197,48,.1); }
   .lesson b { display: block; font-size: 16px; margin-bottom: 4px; }
@@ -148,7 +149,7 @@
   <div class="card panel">
     <h1>Drive<span>Ready</span></h1>
     <div class="row" style="margin:10px 0 0"><span data-tr>Language</span><div class="seg" id="langSel"><button data-lang="en" class="on">English</button><button data-lang="ta">தமிழ்</button></div></div>
-    <p class="sub" style="margin-top:12px" data-tr>Driving school simulator — learn the controls, practise parking, then pass the city exam with traffic and signals.</p>
+    <p class="sub" style="margin-top:12px" data-tr>LMV driving modules — RTO tracks, city traffic, weather, village, mountain tunnel and NHAI highway.</p>
     <div id="lessons"></div>
     <div class="row">
       <span data-tr>Traffic drives on the</span>
